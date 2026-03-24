@@ -1,0 +1,671 @@
+import { useEffect, useState, useCallback } from "react";
+import { useFetcher, useLoaderData, useNavigate } from "react-router";
+import {
+  Page,
+  Layout,
+  Card,
+  BlockStack,
+  Text,
+  Button,
+  Banner,
+  Box,
+  Divider,
+  IndexTable,
+  Badge,
+  Toast,
+  Frame,
+  useIndexResourceState,
+} from "@shopify/polaris";
+import { authenticate } from "../shopify.server";
+import db from "../db.server";
+import { updateRetailInventory } from "../utils/retailSync.server.js";
+import { createAdminApiClient } from "@shopify/admin-api-client";
+import { applyPricingRule } from "../utils/pricing.server.js";
+
+export const loader = async ({ request }) => {
+  const { session } = await authenticate.admin(request);
+  const shopSession = await db.session.findUnique({
+    where: { id: session.id },
+  });
+
+  // Fetch recent logs
+  const logsRaw = await db.syncLog.findMany({
+    take: 10,
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const logs = logsRaw.map(log => ({
+    ...log,
+    createdAt: new Date(log.createdAt).toISOString().substring(11, 19),
+  }));
+
+  // Calculate stats from PushedOrder table
+  const isWholesale = shopSession?.role === "WHOLESALE";
+  const orderCount = await db.pushedOrder.count({
+    where: isWholesale ? {} : { shop: session.shop }
+  });
+
+  // Fetch all inventory for Dashboard
+  const inventory = await db.inventory.findMany({
+    orderBy: { sku: 'asc' },
+  });
+
+  // Fetch existing mappings for this shop
+  const mappings = await db.productMapping.findMany({
+    where: { retailShop: session.shop },
+  });
+
+  const wholesaleSession = await db.session.findFirst({
+    where: {
+      role: 'WHOLESALE',
+      // If we are a Master, try to find our own session first for live data
+      ...(shopSession?.role === 'WHOLESALE' ? { shop: session.shop } : {})
+    }
+  });
+
+  if (!wholesaleSession && shopSession?.role === 'WHOLESALE') {
+    console.log("[Pricing Debug] Using current session as wholesale session.");
+  }
+
+  // Fetch pricing rule for this retailer
+  const pricingRule = await db.pricingRule.findUnique({
+    where: { shop: session.shop }
+  });
+
+  // Fetch master prices and stock (single bulk query)
+  let masterPrices = {};
+  let masterStock = {};
+  if (wholesaleSession && inventory.length > 0) {
+    try {
+      console.log(`[Pricing Debug] Fetching master data for ${inventory.length} SKUs...`);
+      const wholesaleClient = createAdminApiClient({
+        storeDomain: wholesaleSession.shop,
+        apiVersion: "2026-01",
+        accessToken: wholesaleSession.accessToken,
+      });
+
+      // Build OR query for all SKUs
+      const skuQuery = inventory.map(i => `sku:"${i.sku}"`).join(' OR ');
+
+      const dataResponse = await wholesaleClient.request(`
+        query getVariantData($query: String!) {
+          productVariants(first: 250, query: $query) {
+            nodes {
+              sku
+              price
+              inventoryQuantity
+            }
+          }
+        }
+      `, { variables: { query: skuQuery } });
+
+      const variants = dataResponse.data?.productVariants?.nodes || [];
+      console.log(`[Pricing Debug] Shopify returned ${variants.length} variant records.`);
+
+      for (const v of variants) {
+        if (v.sku) {
+          const trimmedSku = v.sku.trim();
+          if (v.price && !masterPrices[trimmedSku]) {
+            masterPrices[trimmedSku] = parseFloat(v.price);
+          }
+          if (v.inventoryQuantity !== undefined) {
+            masterStock[trimmedSku] = (masterStock[trimmedSku] || 0) + v.inventoryQuantity;
+          }
+        }
+      }
+
+      console.log(`[Pricing Debug] Populated masterPrices for keys: ${Object.keys(masterPrices).join(', ')}`);
+      console.log(`[Pricing Debug] Populated masterStock for keys: ${Object.keys(masterStock).join(', ')}`);
+    } catch (err) {
+      console.error("[Pricing Debug] Failed to fetch master data:", err.message);
+    }
+  }
+
+  // Pre-calculate retail prices
+  let retailPrices = {};
+  const isPricingEnabled = !!pricingRule?.enabled;
+  console.log(`[Pricing Debug] Pricing Rule Enabled: ${isPricingEnabled}`);
+
+  if (isPricingEnabled) {
+    for (const [sku, price] of Object.entries(masterPrices)) {
+      retailPrices[sku] = applyPricingRule(price, pricingRule);
+    }
+    console.log(`[Pricing Debug] Calculated retail prices for ${Object.keys(retailPrices).length} SKUs.`);
+  }
+
+  return {
+    role: shopSession?.role,
+    shop: session.shop,
+    logs,
+    inventory,
+    orderCount,
+    mappings,
+    wholesaleShop: wholesaleSession?.shop,
+    masterPrices,
+    masterStock,
+    retailPrices,
+    pricingEnabled: isPricingEnabled,
+    pricingRule: pricingRule,
+  };
+};
+
+export const action = async ({ request }) => {
+  const { session } = await authenticate.admin(request);
+  const formData = await request.formData();
+  const actionType = formData.get("actionType");
+
+  // ----------------------------------------------------
+  // HANDLE ROLE SETTING
+  // ----------------------------------------------------
+  if (actionType === "setRole") {
+    const role = formData.get("role");
+
+    if (!role) {
+      await db.session.update({
+        where: { id: session.id },
+        data: { role: null },
+      });
+      return Response.json({ success: true, role: null });
+    }
+
+    await db.session.update({
+      where: { id: session.id },
+      data: { role },
+    });
+
+    return Response.json({ success: true, role });
+  }
+
+  // ----------------------------------------------------
+  // HANDLE MANUAL SYNC (Broadcast)
+  // ----------------------------------------------------
+  if (actionType === "sync") {
+    const sku = formData.get("sku");
+    const stockLevel = parseInt(formData.get("stockLevel"));
+    const shop = session.shop;
+
+    const retailPartners = await db.session.findMany({
+      where: { role: "RETAIL" }
+    });
+
+    let syncCount = 0;
+    for (const partner of retailPartners) {
+      if (partner.shop === shop) continue;
+      await updateRetailInventory(partner.shop, partner.accessToken, sku, stockLevel);
+      await db.syncLog.create({
+        data: {
+          shop: shop,
+          sku: sku,
+          status: "BROADCAST",
+          message: `Manual Sync to ${partner.shop}`,
+        }
+      });
+      syncCount++;
+    }
+
+    return Response.json({ success: true, message: `Synced ${sku} to ${syncCount} stores.` });
+  }
+
+  return Response.json({ success: false });
+};
+
+export default function Index() {
+  const { role, shop, logs, inventory, orderCount, mappings, wholesaleShop, masterPrices, masterStock, retailPrices, pricingEnabled, pricingRule } = useLoaderData();
+  const navigate = useNavigate();
+  const fetcher = useFetcher();
+  const importFetcher = useFetcher();
+
+  // IndexTable selection
+  const resourceIDResolver = (item) => String(item.id);
+  const { selectedResources, allResourcesSelected, handleSelectionChange } =
+    useIndexResourceState(inventory, { resourceIDResolver });
+
+  // Toast state
+  const [toastActive, setToastActive] = useState(false);
+  const [toastContent, setToastContent] = useState("");
+  const [toastError, setToastError] = useState(false);
+
+  // Track which SKUs were just imported (for instant UI feedback)
+  const [justImported, setJustImported] = useState({});
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (fetcher.state === "idle") {
+        fetcher.load("/");
+      }
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [fetcher]);
+
+  // Handle import response (single or bulk)
+  useEffect(() => {
+    if (importFetcher.state === "idle" && importFetcher.data) {
+      if (importFetcher.data.success) {
+        // Show appropriate toast
+        setToastContent(importFetcher.data.message || "Product imported successfully!");
+        setToastError(false);
+        setToastActive(true);
+
+        // Track imported SKUs for instant UI update
+        const importResults = importFetcher.data.results || [];
+        if (importResults.length > 0) {
+          const newImports = {};
+          for (const r of importResults) {
+            if (r.success) {
+              newImports[r.sku] = { handle: r.handle, productId: r.productId };
+            }
+          }
+          setJustImported(prev => ({ ...prev, ...newImports }));
+        } else if (importFetcher.data.handle) {
+          // Single-import fallback
+          const importedSku = importFetcher.formData?.get("sku");
+          if (importedSku) {
+            setJustImported(prev => ({
+              ...prev,
+              [importedSku]: {
+                handle: importFetcher.data.handle,
+                productId: importFetcher.data.productId,
+              }
+            }));
+          }
+        }
+        // Refresh the main data
+        fetcher.load("/");
+      } else if (importFetcher.data.message) {
+        setToastContent(importFetcher.data.message);
+        setToastError(true);
+        setToastActive(true);
+      }
+    }
+  }, [importFetcher.state, importFetcher.data]);
+
+  const displayLogs = fetcher.data?.logs || logs;
+  const displayOrderCount = fetcher.data?.orderCount !== undefined ? fetcher.data.orderCount : orderCount;
+  const currentRole = fetcher.data?.role !== undefined ? fetcher.data.role : role;
+
+  const handleManualSync = (sku, stockLevel) => {
+    fetcher.submit({ actionType: "sync", sku, stockLevel }, { method: "POST" });
+  };
+
+  const handleImport = (sku) => {
+    importFetcher.submit({ sku }, { method: "POST", action: "/app/import" });
+  };
+
+  // Bulk import handler
+  const handleBulkImport = () => {
+    // Map selected IDs back to SKUs
+    const selectedSkus = inventory
+      .filter(item => selectedResources.includes(String(item.id)))
+      .filter(item => !isMapped(item.sku)) // Only import un-synced items
+      .map(item => item.sku);
+
+    if (selectedSkus.length === 0) {
+      setToastContent("All selected products are already imported.");
+      setToastError(true);
+      setToastActive(true);
+      return;
+    }
+
+    importFetcher.submit(
+      { skus: selectedSkus.join(",") },
+      { method: "POST", action: "/app/import" }
+    );
+  };
+
+  const isMapped = (sku) => mappings?.some(m => m.masterSku === sku) || justImported[sku];
+
+  const getMapping = (sku) => {
+    const dbMapping = mappings?.find(m => m.masterSku === sku);
+    if (dbMapping) return dbMapping;
+    if (justImported[sku]) return justImported[sku];
+    return null;
+  };
+
+  const getViewInStoreUrl = (sku) => {
+    const mapping = getMapping(sku);
+    if (!mapping) return null;
+
+    // Prioritize Admin URL for Retailers
+    const productId = mapping.retailProductId;
+    if (productId) {
+      // Handle gid://shopify/Product/123456789
+      const numericId = productId.includes('/') ? productId.split('/').pop() : productId;
+      const storeName = shop.replace('.myshopify.com', '');
+      return `https://admin.shopify.com/store/${storeName}/products/${numericId}`;
+    }
+
+    // Fallback to storefront URL if handle exists
+    if (mapping.handle) {
+      return `https://${shop}/products/${mapping.handle}`;
+    }
+
+    return null;
+  };
+
+  const toastMarkup = toastActive ? (
+    <Toast
+      content={toastContent}
+      error={toastError}
+      onDismiss={() => setToastActive(false)}
+      duration={4000}
+    />
+  ) : null;
+
+  if (!currentRole) {
+    return (
+      <Frame>
+        <Page narrowWidth>
+          <BlockStack gap="500">
+            <Text variant="headingXl" as="h1" alignment="center">Choose Your Store Role</Text>
+            <Layout>
+              <Layout.Section variant="oneHalf">
+                <Card>
+                  <Box padding="400">
+                    <BlockStack gap="400" align="center">
+                      <Text variant="headingMd" as="h2">Wholesale Master</Text>
+                      <Text as="p" tone="subdued">The source of truth. Inventory updates here are pushed to all retailers.</Text>
+                      <Button variant="primary" onClick={() => fetcher.submit({ actionType: "setRole", role: "WHOLESALE" }, { method: "POST" })}>Select Wholesale</Button>
+                    </BlockStack>
+                  </Box>
+                </Card>
+              </Layout.Section>
+              <Layout.Section variant="oneHalf">
+                <Card>
+                  <Box padding="400">
+                    <BlockStack gap="400" align="center">
+                      <Text variant="headingMd" as="h2">Retail Partner</Text>
+                      <Text as="p" tone="subdued">Receives updates. Inventory is automatically synced from the master store.</Text>
+                      <Button onClick={() => fetcher.submit({ actionType: "setRole", role: "RETAIL" }, { method: "POST" })}>Select Retail</Button>
+                    </BlockStack>
+                  </Box>
+                </Card>
+              </Layout.Section>
+            </Layout>
+          </BlockStack>
+        </Page>
+        {toastMarkup}
+      </Frame>
+    );
+  }
+
+  return (
+    <Frame>
+      <section style={{ padding: '32px', maxWidth: '1200px', margin: '0 auto', width: '100%' }}>
+        <BlockStack gap="400">
+          <style>{`
+            .main-card {
+              box-shadow: 0 4px 20px rgba(0,0,0,0.05);
+              border-radius: 12px;
+              overflow: hidden;
+              background: #fff;
+            }
+            .search-bar {
+              display: flex;
+              gap: 12px;
+              padding: 16px;
+              background: #f9fafb;
+              border-bottom: 1px solid #e1e3e5;
+            }
+            .status-pill {
+              display: inline-flex;
+              align-items: center;
+              gap: 6px;
+              padding: 4px 12px;
+              border-radius: 20px;
+              font-size: 12px;
+              font-weight: 600;
+              border: 1px solid currentColor;
+            }
+            .status-pill.active { color: #008060; background: #e6f4ea; }
+            .view-store-link {
+              display: inline-flex;
+              align-items: center;
+              gap: 4px;
+              padding: 4px 12px;
+              border-radius: 6px;
+              font-size: 13px;
+              font-weight: 600;
+              color: #008060;
+              background: #e6f4ea;
+              text-decoration: none;
+              transition: all 0.15s ease;
+              cursor: pointer;
+            }
+            .view-store-link:hover {
+              background: #c8ecd5;
+              color: #006e52;
+            }
+            .view-store-link {
+              display: inline-block;
+              padding: 4px 8px;
+              border-radius: 4px;
+            }
+            .Polaris-IndexTable__TableRow {
+              cursor: default !important;
+            }
+            .Polaris-IndexTable__TableCell .view-store-link,
+            .Polaris-IndexTable__TableCell button,
+            .Polaris-IndexTable__TableCell .Polaris-Checkbox__Input {
+              cursor: pointer !important;
+            }
+          `}</style>
+
+          <div>
+            <Text variant="headingMd" as="h2">Connect and manage your stores</Text>
+            <Text tone="subdued">Import and sync inventory from your master wholesale shop.</Text>
+          </div>
+
+          {currentRole === "WHOLESALE" && (
+            <Card>
+              <BlockStack gap="400">
+                <Text variant="headingMd" as="h2">Master Control</Text>
+                <Text as="p" tone="subdued">Browse your Shopify products and list them on the global app catalog for all retailers to see.</Text>
+                <div>
+                  <Button variant="primary" onClick={() => navigate("/app/master-catalog")}>Manage Global Catalog</Button>
+                </div>
+              </BlockStack>
+            </Card>
+          )}
+
+          {currentRole === "RETAIL" && !pricingEnabled && (
+            <Banner
+              title="Global Pricing Rules are Currently Disabled"
+              tone="warning"
+              action={{
+                content: "Configure Pricing",
+                url: "/app/settings",
+              }}
+            >
+              <p>Your estimated retail prices and margins are hidden. Enable pricing rules in settings to see them on the dashboard and apply markups automatically during import.</p>
+            </Banner>
+          )}
+
+          <div className="main-card">
+            <Card padding="0">
+              <div className="search-bar">
+                <div style={{ flex: 1, position: 'relative' }}>
+                  <input type="text" placeholder="Search by product name..." style={{ width: '100%', padding: '10px 16px', borderRadius: '8px', border: '1px solid #e1e3e5', outline: 'none' }} />
+                </div>
+                <Button variant="primary">Connect new store</Button>
+              </div>
+
+              <IndexTable
+                resourceName={{ singular: 'product', plural: 'products' }}
+                itemCount={inventory.length}
+                selectedItemsCount={
+                  allResourcesSelected ? 'All' : selectedResources.length
+                }
+                onSelectionChange={handleSelectionChange}
+                headings={[
+                  { title: 'Product' },
+                  { title: 'Status' },
+                  { title: 'Master Cost' },
+                  ...(currentRole === 'RETAIL' && pricingEnabled ? [{ title: 'Your Price' }] : []),
+                  { title: 'Stock' },
+                  { title: 'Actions', alignment: 'end' }
+                ]}
+                selectable={currentRole === 'RETAIL'}
+                promotedBulkActions={
+                  currentRole === 'RETAIL' ? [
+                    {
+                      content: importFetcher.state !== 'idle' ? 'Importing...' : `Import ${selectedResources.length} to Store`,
+                      onAction: handleBulkImport,
+                      disabled: importFetcher.state !== 'idle',
+                    },
+                  ] : []
+                }
+              >
+                {inventory.map(({ id, sku, productName, stockLevel, masterCostPrice }, index) => {
+                  const mapped = isMapped(sku);
+                  const isImporting = importFetcher.state !== "idle" && importFetcher.formData?.get("sku") === sku;
+                  const viewUrl = mapped ? getViewInStoreUrl(sku) : null;
+
+                  return (
+                    <IndexTable.Row
+                      id={String(id)}
+                      key={id}
+                      position={index}
+                      selected={selectedResources.includes(String(id))}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <IndexTable.Cell>
+                        <BlockStack gap="050">
+                          <Text variant="bodyMd" fontWeight="bold">{productName}</Text>
+                          <Text variant="bodySm" tone="subdued">SKU: {sku}</Text>
+                        </BlockStack>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        <div className={`status-pill ${mapped || currentRole === 'WHOLESALE' ? 'active' : ''}`}>
+                          {mapped || currentRole === 'WHOLESALE' ? '● Active' : '○ Standby'}
+                        </div>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        {(() => {
+                          const livePrice = masterPrices[sku.trim()];
+                          const displayPrice = livePrice || masterCostPrice;
+                          if (displayPrice) {
+                            return <Text variant="bodyMd" tone="subdued">${displayPrice.toFixed(2)}</Text>;
+                          }
+                          return <Text variant="bodySm" tone="subdued">—</Text>;
+                        })()}
+                      </IndexTable.Cell>
+                      {currentRole === 'RETAIL' && pricingEnabled && (
+                        <IndexTable.Cell>
+                          {retailPrices[sku] ? (
+                            <BlockStack gap="050">
+                              <Text variant="bodyMd" fontWeight="bold">
+                                <span style={{ color: '#008060' }}>${retailPrices[sku].toFixed(2)}</span>
+                              </Text>
+                              {masterPrices[sku] && (
+                                <Text variant="bodySm" tone="success">
+                                  +${(retailPrices[sku] - masterPrices[sku]).toFixed(2)} margin
+                                </Text>
+                              )}
+                            </BlockStack>
+                          ) : (
+                            <Text variant="bodySm" tone="subdued">—</Text>
+                          )}
+                        </IndexTable.Cell>
+                      )}
+                      <IndexTable.Cell>
+                        {currentRole === 'WHOLESALE' ? (
+                          <Badge tone={(masterStock[sku.trim()] || 0) > 0 ? "success" : "critical"}>
+                            {masterStock[sku.trim()] !== undefined ? masterStock[sku.trim()] : 0} in Shopify
+                          </Badge>
+                        ) : (
+                          <Badge tone={stockLevel > 0 ? "success" : "critical"}>{stockLevel} available</Badge>
+                        )}
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', alignItems: 'center' }}>
+                          {currentRole === 'WHOLESALE' ? (
+                            <Button size="slim" onClick={() => handleManualSync(sku, stockLevel)} loading={fetcher.state === "submitting" && fetcher.formData?.get("sku") === sku}>
+                              Broadcast Stock
+                            </Button>
+                          ) : (
+                            mapped ? (
+                              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                <Badge tone="success">Synced</Badge>
+                                {viewUrl && (
+                                  <a
+                                    href={viewUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="view-store-link"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    View in Store →
+                                  </a>
+                                )}
+                              </div>
+                            ) : (
+                              <Button
+                                size="slim"
+                                variant="primary"
+                                onClick={() => handleImport(sku)}
+                                loading={isImporting}
+                              >
+                                {isImporting ? 'Importing...' : 'Import to Store'}
+                              </Button>
+                            )
+                          )}
+                          <Button size="slim" icon={() => <span>⋮</span>} />
+                        </div>
+                      </IndexTable.Cell>
+                    </IndexTable.Row>
+                  );
+                })}
+              </IndexTable>
+            </Card>
+          </div>
+
+          {/* RECENT ACTIVITY SECTION */}
+          <Layout>
+            <Layout.Section variant="oneHalf">
+              <Card>
+                <Box padding="400">
+                  <BlockStack gap="200">
+                    <Text variant="headingMd">Recent Activity</Text>
+                    {displayLogs.length > 0 ? (
+                      displayLogs.map((log) => (
+                        <Box key={log.id} padding="300" borderBlockEndWidth="025" borderColor="border">
+                          <BlockStack gap="100">
+                            <Text variant="bodyMd" fontWeight="bold">
+                              {log.sku === 'ORDER_FORWARD' ? '📦' : log.status === 'SUCCESS' ? '✅' : '🔄'} {log.sku}
+                            </Text>
+                            <Text variant="bodySm" tone="subdued">{log.message}</Text>
+                          </BlockStack>
+                        </Box>
+                      ))
+                    ) : (
+                      <Text tone="subdued">No activity yet.</Text>
+                    )}
+                  </BlockStack>
+                </Box>
+              </Card>
+            </Layout.Section>
+            <Layout.Section variant="oneHalf">
+              <Card>
+                <Box padding="400">
+                  <BlockStack gap="200">
+                    <Text variant="headingMd">Performance</Text>
+                    <Box padding="400" background="bg-surface-secondary" borderRadius="200">
+                      <BlockStack align="center">
+                        <Text variant="heading2xl">{displayOrderCount || 0}</Text>
+                        <Text tone="subdued">Total Orders Processed</Text>
+                      </BlockStack>
+                    </Box>
+                    <Box paddingBlockStart="200">
+                      <Button variant="plain" tone="critical" onClick={() => fetcher.submit({ actionType: "setRole", role: "" }, { method: "POST" })}>Reset Role</Button>
+                    </Box>
+                  </BlockStack>
+                </Box>
+              </Card>
+            </Layout.Section>
+          </Layout>
+        </BlockStack>
+      </section>
+      {toastMarkup}
+    </Frame>
+  );
+}

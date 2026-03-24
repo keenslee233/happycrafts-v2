@@ -1,0 +1,41 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "2c43e009687e8c91e15245ce7869aaad"
+name = "happycraftsV2"
+application_url = "https://gulf-float-applied-africa.trycloudflare.com"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = true
+
+[webhooks]
+api_version = "2026-04"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/scopes_update" ]
+  uri = "/webhooks/app/scopes_update"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled" ]
+  uri = "/webhooks/app/uninstalled"
+
+  [[webhooks.subscriptions]]
+  topics = [ "products/update" ]
+  uri = "/webhooks/products_update"
+
+  [[webhooks.subscriptions]]
+  topics = [ "orders/create", "orders/paid", "draft_orders/create" ]
+  uri = "/webhooks/orders_create"
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_inventory,write_inventory,read_orders,write_orders,read_products,write_products,read_draft_orders,write_draft_orders"
+optional_scopes = [ ]
+use_legacy_install_flow = false
+
+[auth]
+redirect_urls = [
+  "https://gulf-float-applied-africa.trycloudflare.com/auth/callback",
+  "https://gulf-float-applied-africa.trycloudflare.com/auth/shopify/callback",
+  "https://gulf-float-applied-africa.trycloudflare.com/api/auth/callback"
+]
