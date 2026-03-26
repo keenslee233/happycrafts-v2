@@ -1,10 +1,15 @@
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../convex/_generated/api.js";
 
-console.log("Diagnostic: Environment keys available:", Object.keys(process.env).filter(k => k.includes("SHOPIFY") || k.includes("CONVEX")));
+
 
 if (!process.env.CONVEX_URL) {
-  throw new Error("CRITICAL: CONVEX_URL is not set in environment variables.");
+  const msg = "CRITICAL: CONVEX_URL is not set in environment variables.";
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(msg);
+  } else {
+    console.warn(msg);
+  }
 }
 
 const convex = new ConvexHttpClient(process.env.CONVEX_URL);

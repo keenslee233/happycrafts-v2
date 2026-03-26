@@ -7,14 +7,22 @@ import {
 import { ConvexSessionStorage } from "./convex-session-storage";
 import { convex } from "./db.server";
 
+const isProd = process.env.NODE_ENV === "production";
+
 if (!process.env.SHOPIFY_API_KEY) {
-  throw new Error("CRITICAL: SHOPIFY_API_KEY is not set in environment variables.");
+  const msg = "CRITICAL: SHOPIFY_API_KEY is not set in environment variables.";
+  if (isProd) throw new Error(msg);
+  else console.warn(msg);
 }
 if (!process.env.SHOPIFY_API_SECRET) {
-  throw new Error("CRITICAL: SHOPIFY_API_SECRET is not set in environment variables.");
+  const msg = "CRITICAL: SHOPIFY_API_SECRET is not set in environment variables.";
+  if (isProd) throw new Error(msg);
+  else console.warn(msg);
 }
 if (!process.env.SHOPIFY_APP_URL) {
-  throw new Error("CRITICAL: SHOPIFY_APP_URL is not set in environment variables.");
+  const msg = "CRITICAL: SHOPIFY_APP_URL is not set in environment variables.";
+  if (isProd) throw new Error(msg);
+  else console.warn(msg);
 }
 
 const shopify = shopifyApp({
