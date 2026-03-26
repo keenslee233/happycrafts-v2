@@ -2,11 +2,11 @@
 
 client_id = "2c43e009687e8c91e15245ce7869aaad"
 name = "happycraftsV2"
-application_url = "https://gulf-float-applied-africa.trycloudflare.com"
+application_url = "https://happycraftsv2.netlify.app"
 embedded = true
 
 [build]
-automatically_update_urls_on_dev = true
+automatically_update_urls_on_dev = false
 
 [webhooks]
 api_version = "2026-04"
@@ -35,7 +35,7 @@ use_legacy_install_flow = false
 
 [auth]
 redirect_urls = [
-  "https://gulf-float-applied-africa.trycloudflare.com/auth/callback",
-  "https://gulf-float-applied-africa.trycloudflare.com/auth/shopify/callback",
-  "https://gulf-float-applied-africa.trycloudflare.com/api/auth/callback"
+  "https://happycraftsv2.netlify.app/auth/callback",
+  "https://happycraftsv2.netlify.app/auth/shopify/callback",
+  "https://happycraftsv2.netlify.app/api/auth/callback"
 ]
