@@ -18,9 +18,9 @@ export default function App() {
   return (
     <div className={styles.index}>
       <div className={styles.content}>
-        <h1 className={styles.heading}>A short heading about [your app]</h1>
+        <h1 className={styles.heading}>Welcome to Happycrafts</h1>
         <p className={styles.text}>
-          A tagline about [your app] that describes your value proposition.
+          Synchronize your inventory across stores and manage your marketplace with ease.
         </p>
         {showForm && (
           <Form className={styles.form} method="post" action="/auth/login">
@@ -36,16 +36,13 @@ export default function App() {
         )}
         <ul className={styles.list}>
           <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
+            <strong>Inventory Sync</strong>. Automatically keep your retail and wholesale stores in sync.
           </li>
           <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
+            <strong>Master Catalog</strong>. Define your products once and push them to all connected stores.
           </li>
           <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
+            <strong>Order Forwarding</strong>. Seamlessly bridge retail orders to your wholesale fulfillment.
           </li>
         </ul>
       </div>
