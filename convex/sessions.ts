@@ -105,4 +105,12 @@ export const findSessionByShopAndRole = query({
   },
 });
 
-
+export const findSessionsByRole = query({
+  args: { role: v.string() },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("sessions")
+      .filter((q) => q.eq(q.field("role"), args.role))
+      .collect();
+  },
+});
