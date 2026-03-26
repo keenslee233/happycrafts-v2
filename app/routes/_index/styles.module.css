@@ -114,3 +114,31 @@
   color: #1a1c1e;
   display: block;
 }
+
+@media (max-width: 640px) {
+  .index {
+    padding: 20px;
+  }
+
+  .content {
+    padding: 32px 20px;
+    border-radius: 16px;
+  }
+
+  .heading {
+    font-size: 24px;
+  }
+
+  .text {
+    font-size: 16px;
+  }
+
+  .list {
+    padding-top: 24px;
+  }
+
+  .list li {
+    font-size: 13px;
+    gap: 8px;
+  }
+}
