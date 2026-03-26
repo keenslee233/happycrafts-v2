@@ -7,6 +7,13 @@ import {
 import { ConvexSessionStorage } from "./convex-session-storage";
 import { convex } from "./db.server";
 
+if (!process.env.SHOPIFY_API_KEY) {
+  console.error("CRITICAL: SHOPIFY_API_KEY is not set in environment variables.");
+}
+if (!process.env.SHOPIFY_API_SECRET) {
+  console.error("CRITICAL: SHOPIFY_API_SECRET is not set in environment variables.");
+}
+
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
   apiSecretKey: process.env.SHOPIFY_API_SECRET || "",
