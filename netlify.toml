@@ -2,12 +2,12 @@
   command = "npm run build"
   publish = "build/client"
 
-[functions]
-  directory = "build/server"
+# [functions]
+#   directory = "build/server"
 
 [[redirects]]
   from = "/*"
-  to = "/.netlify/functions/index"
+  to = "/.netlify/functions/react-router-server"
   status = 200
 
 [[headers]]
