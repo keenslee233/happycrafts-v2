@@ -13,13 +13,16 @@ if (!process.env.SHOPIFY_API_KEY) {
 if (!process.env.SHOPIFY_API_SECRET) {
   console.error("CRITICAL: SHOPIFY_API_SECRET is not set in environment variables.");
 }
+if (!process.env.SHOPIFY_APP_URL) {
+  console.error("CRITICAL: SHOPIFY_APP_URL is not set in environment variables.");
+}
 
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
-  apiSecretKey: process.env.SHOPIFY_API_SECRET || "",
-  apiVersion: "2026-01",
+  apiSecretKey: process.env.SHOPIFY_API_SECRET,
+  apiVersion: ApiVersion.October24,
   scopes: process.env.SCOPES?.split(","),
-  appUrl: process.env.SHOPIFY_APP_URL || "",
+  appUrl: process.env.SHOPIFY_APP_URL,
   authPathPrefix: "/auth",
   sessionStorage: new ConvexSessionStorage(),
   distribution: AppDistribution.AppStore,
