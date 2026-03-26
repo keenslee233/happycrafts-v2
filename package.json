@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@netlify/functions": "^5.1.5",
+    "@netlify/vite-plugin-react-router": "^3.1.1",
     "@react-router/dev": "^7.12.0",
     "@react-router/fs-routes": "^7.12.0",
     "@react-router/node": "^7.12.0",
