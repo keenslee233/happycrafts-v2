@@ -8,13 +8,13 @@ import { ConvexSessionStorage } from "./convex-session-storage";
 import { convex } from "./db.server";
 
 if (!process.env.SHOPIFY_API_KEY) {
-  console.error("CRITICAL: SHOPIFY_API_KEY is not set in environment variables.");
+  throw new Error("CRITICAL: SHOPIFY_API_KEY is not set in environment variables.");
 }
 if (!process.env.SHOPIFY_API_SECRET) {
-  console.error("CRITICAL: SHOPIFY_API_SECRET is not set in environment variables.");
+  throw new Error("CRITICAL: SHOPIFY_API_SECRET is not set in environment variables.");
 }
 if (!process.env.SHOPIFY_APP_URL) {
-  console.error("CRITICAL: SHOPIFY_APP_URL is not set in environment variables.");
+  throw new Error("CRITICAL: SHOPIFY_APP_URL is not set in environment variables.");
 }
 
 const shopify = shopifyApp({
