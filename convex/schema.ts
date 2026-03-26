@@ -46,7 +46,7 @@ export default defineSchema({
     customerEmail: v.optional(v.string()),
     shippingCity: v.optional(v.string()),
     createdAt: v.number(), // timestamp
-  }).index("by_retailOrderId", ["retailOrderId"]).index("by_shop", ["shop"]),
+  }).index("by_retailOrderId", ["retailOrderId"]).index("by_shop", ["shop"]).index("by_masterStoreId", ["masterStoreId"]),
 
   syncLogs: defineTable({
     shop: v.string(),

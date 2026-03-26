@@ -1,9 +1,7 @@
 import { authenticate } from "../shopify.server";
-import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api.js";
 import { updateRetailInventory } from "../utils/retailSync.server.js";
-
-const convex = new ConvexHttpClient(process.env.CONVEX_URL);
+import convex from "../db.server";
 
 export const action = async ({ request }) => {
   const { topic, shop, session, admin, payload } = await authenticate.webhook(

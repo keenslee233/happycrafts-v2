@@ -12,38 +12,29 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useSearchParams } from "react-router";
-import db from "../db.server";
+import { api } from "../../convex/_generated/api.js";
+import convex from "../db.server";
 
 export const loader = async ({ request }) => {
     const { session } = await authenticate.admin(request);
 
-    // Fetch store role
-    const shopSession = await db.session.findUnique({
-        where: { id: session.id }
-    });
-    const role = shopSession?.role || "RETAIL";
+    // Fetch store role from Convex sessions
+    const shopSessions = await convex.query(api.sessions.findSessionsByShop, { shop: session.shop });
+    const role = shopSessions[0]?.role || "RETAIL";
 
-    // Fetch orders based on role
+    // Fetch orders based on role using Convex
     let orders = [];
     if (role === "WHOLESALE") {
-        orders = await db.pushedOrder.findMany({
-            where: { masterStoreId: session.shop },
-            orderBy: { createdAt: "desc" },
-            take: 10
-        });
+        orders = await convex.query(api.orders.listOrdersByMaster, { masterStoreId: session.shop });
     } else {
-        orders = await db.pushedOrder.findMany({
-            where: { shop: session.shop },
-            orderBy: { createdAt: "desc" },
-            take: 10
-        });
+        orders = await convex.query(api.orders.listOrders, { shop: session.shop });
     }
 
-    const totalProcessed = await db.pushedOrder.count({
-        where: role === "WHOLESALE" ? { masterStoreId: session.shop } : { shop: session.shop }
-    });
+    // Limit to 10 for dashboard
+    const displayOrders = orders.slice(0, 10);
+    const totalProcessed = orders.length;
 
-    return { role, orders, totalProcessed };
+    return { role, orders: displayOrders, totalProcessed };
 };
 
 export default function Dashboard() {

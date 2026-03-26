@@ -16,23 +16,20 @@ import {
     EmptyState,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
-import db from "../db.server";
+import { api } from "../../convex/_generated/api.js";
+import convex from "../db.server";
 import { useState, useEffect } from "react";
 
 export const loader = async ({ request }) => {
-    await authenticate.admin(request);
-
-    // Fetch all products marked as Public
-    const publicInventory = await db.inventory.findMany({
-        where: { isPublic: true },
-    });
-    const publicProducts = publicInventory.map(p => ({ ...p, id: p.id.toString() }));
-
-    // Check which ones are already imported by this shop
     const { session } = await authenticate.admin(request);
-    const importedMappings = await db.productMapping.findMany({
-        where: { retailShop: session.shop },
-        select: { masterSku: true }
+
+    // Fetch all products marked as Public from Convex
+    const publicInventory = await convex.query(api.inventory.listPublicInventory);
+    const publicProducts = publicInventory.map(p => ({ ...p, id: p._id }));
+
+    // Check which ones are already imported by this shop from Convex
+    const importedMappings = await convex.query(api.productMappings.listMappings, {
+        retailShop: session.shop
     });
     const importedSkus = new Set(importedMappings.map(m => m.masterSku));
 

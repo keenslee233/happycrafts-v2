@@ -4,9 +4,14 @@ import { v } from "convex/values";
 export const listInventory = query({
   args: { shop: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    // If we had a shop field in inventory, we could filter by it.
-    // For now, let's just list all or filter by masterStoreId if needed.
     return await ctx.db.query("inventory").collect();
+  },
+});
+
+export const listPublicInventory = query({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.db.query("inventory").filter(q => q.eq(q.field("isPublic"), true)).collect();
   },
 });
 

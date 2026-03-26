@@ -1,10 +1,8 @@
 import { authenticate } from "../shopify.server";
-import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api.js";
 import { createAdminApiClient } from "@shopify/admin-api-client";
 import { applyPricingRule } from "../utils/pricing.server.js";
-
-const convex = new ConvexHttpClient(process.env.CONVEX_URL);
+import convex from "../db.server";
 
 /**
  * Imports one or more products from the Master store to a Retail store.

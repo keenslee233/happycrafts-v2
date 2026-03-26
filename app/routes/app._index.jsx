@@ -17,60 +17,54 @@ import {
   useIndexResourceState,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
-import db from "../db.server";
 import { updateRetailInventory } from "../utils/retailSync.server.js";
 import { createAdminApiClient } from "@shopify/admin-api-client";
 import { applyPricingRule } from "../utils/pricing.server.js";
+import { api } from "../../convex/_generated/api.js";
+import convex from "../db.server";
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
-  const shopSession = await db.session.findUnique({
-    where: { id: session.id },
-  });
+  
+  // Fetch shop sessions from Convex
+  const shopSessions = await convex.query(api.sessions.findSessionsByShop, { shop: session.shop });
+  const shopSession = shopSessions[0];
 
-  // Fetch recent logs
-  const logsRaw = await db.syncLog.findMany({
-    take: 10,
-    orderBy: { createdAt: 'desc' },
-  });
-
+  // Fetch recent logs from Convex
+  const logsRaw = await convex.query(api.syncLogs.listLogs, { shop: session.shop });
+  
   const logs = logsRaw.map(log => ({
     ...log,
+    id: log._id, // Map _id to id for the UI
     createdAt: new Date(log.createdAt).toISOString().substring(11, 19),
   }));
 
-  // Calculate stats from PushedOrder table
+  // Calculate order stats from Convex
   const isWholesale = shopSession?.role === "WHOLESALE";
-  const orderCount = await db.pushedOrder.count({
-    where: isWholesale ? {} : { shop: session.shop }
-  });
+  let pushedOrders = [];
+  if (isWholesale) {
+    pushedOrders = await convex.query(api.orders.listOrdersByMaster, { masterStoreId: session.shop });
+  } else {
+    pushedOrders = await convex.query(api.orders.listOrders, { shop: session.shop });
+  }
+  const orderCount = pushedOrders.length;
 
   // Fetch all inventory for Dashboard
-  const inventory = await db.inventory.findMany({
-    orderBy: { sku: 'asc' },
-  });
+  const inventoryRaw = await convex.query(api.inventory.listInventory);
+  const inventory = inventoryRaw.map(item => ({ ...item, id: item._id }));
 
-  // Fetch existing mappings for this shop
-  const mappings = await db.productMapping.findMany({
-    where: { retailShop: session.shop },
-  });
+  // Fetch existing mappings
+  const mappingsRaw = await convex.query(api.productMappings.listMappings, { retailShop: session.shop });
+  const mappings = mappingsRaw.map(m => ({ ...m, id: m._id }));
 
-  const wholesaleSession = await db.session.findFirst({
-    where: {
-      role: 'WHOLESALE',
-      // If we are a Master, try to find our own session first for live data
-      ...(shopSession?.role === 'WHOLESALE' ? { shop: session.shop } : {})
-    }
-  });
+  // Find a Wholesale partner for master data
+  const wholesaleSessions = await convex.query(api.sessions.findSessionsByRole, { role: 'WHOLESALE' });
+  let wholesaleSession = wholesaleSessions.find(s => 
+    shopSession?.role === 'WHOLESALE' ? s.shop === session.shop : true
+  );
 
-  if (!wholesaleSession && shopSession?.role === 'WHOLESALE') {
-    console.log("[Pricing Debug] Using current session as wholesale session.");
-  }
-
-  // Fetch pricing rule for this retailer
-  const pricingRule = await db.pricingRule.findUnique({
-    where: { shop: session.shop }
-  });
+  // Fetch pricing rule
+  const pricingRule = await convex.query(api.pricing.getPricingRuleByShop, { shop: session.shop });
 
   // Fetch master prices and stock (single bulk query)
   let masterPrices = {};
@@ -159,19 +153,18 @@ export const action = async ({ request }) => {
   // ----------------------------------------------------
   if (actionType === "setRole") {
     const role = formData.get("role");
-
-    if (!role) {
-      await db.session.update({
-        where: { id: session.id },
-        data: { role: null },
-      });
-      return Response.json({ success: true, role: null });
+    
+    // In Convex, we update the session based on the shop.
+    // We already have storeSession mutation.
+    const shopSessions = await convex.query(api.sessions.findSessionsByShop, { shop: session.shop });
+    const shopSession = shopSessions[0];
+    
+    if (shopSession) {
+        await convex.mutation(api.sessions.storeSession, {
+            ...shopSession,
+            role: role || undefined
+        });
     }
-
-    await db.session.update({
-      where: { id: session.id },
-      data: { role },
-    });
 
     return Response.json({ success: true, role });
   }
@@ -184,21 +177,18 @@ export const action = async ({ request }) => {
     const stockLevel = parseInt(formData.get("stockLevel"));
     const shop = session.shop;
 
-    const retailPartners = await db.session.findMany({
-      where: { role: "RETAIL" }
-    });
+    const retailPartners = await convex.query(api.sessions.findSessionsByRole, { role: "RETAIL" });
 
     let syncCount = 0;
     for (const partner of retailPartners) {
       if (partner.shop === shop) continue;
       await updateRetailInventory(partner.shop, partner.accessToken, sku, stockLevel);
-      await db.syncLog.create({
-        data: {
-          shop: shop,
-          sku: sku,
-          status: "BROADCAST",
-          message: `Manual Sync to ${partner.shop}`,
-        }
+      await convex.mutation(api.syncLogs.createLog, {
+        shop: shop,
+        sku: sku,
+        status: "BROADCAST",
+        message: `Manual Sync to ${partner.shop}`,
+        createdAt: Date.now()
       });
       syncCount++;
     }

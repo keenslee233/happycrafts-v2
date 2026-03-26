@@ -4,20 +4,20 @@ import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { authenticate } from "../shopify.server";
 import { AppProvider as PolarisAppProvider, Text, Button, Badge } from "@shopify/polaris";
 import translations from "@shopify/polaris/locales/en.json";
-import db from "../db.server";
+import { api } from "../../convex/_generated/api.js";
+import convex from "../db.server";
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
 
-  const shopSession = await db.session.findUnique({
-    where: { id: session.id },
-  });
+  const shopSessions = await convex.query(api.sessions.findSessionsByShop, { shop: session.shop });
+  const shopSession = shopSessions[0];
 
-  const syncedCount = await db.productMapping.count({
-    where: { retailShop: session.shop }
-  });
+  const mappings = await convex.query(api.productMappings.listMappings, { retailShop: session.shop });
+  const syncedCount = mappings.length;
 
-  const totalCount = await db.inventory.count();
+  const inventory = await convex.query(api.inventory.listInventory);
+  const totalCount = inventory.length;
 
   return {
     apiKey: process.env.SHOPIFY_API_KEY || "",

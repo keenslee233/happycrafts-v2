@@ -14,19 +14,16 @@ import {
     Banner,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
-import db from "../db.server";
+import { api } from "../../convex/_generated/api.js";
+import convex from "../db.server";
 
 export const loader = async ({ request }) => {
     const { session } = await authenticate.admin(request);
 
-    const shopSession = await db.session.findUnique({
-        where: { id: session.id }
-    });
-    const role = shopSession?.role || "RETAIL";
+    const shopSessions = await convex.query(api.sessions.findSessionsByShop, { shop: session.shop });
+    const role = shopSessions[0]?.role || "RETAIL";
 
-    const rule = await db.pricingRule.findUnique({
-        where: { shop: session.shop }
-    });
+    const rule = await convex.query(api.pricing.getPricingRule, { shop: session.shop });
 
     return {
         rule: rule || {
@@ -44,8 +41,8 @@ export const action = async ({ request }) => {
     const { session } = await authenticate.admin(request);
 
     // Safety check: Only Retailers can save pricing rules
-    const shopSession = await db.session.findUnique({ where: { id: session.id } });
-    if (shopSession?.role !== "RETAIL") {
+    const shopSessions = await convex.query(api.sessions.findSessionsByShop, { shop: session.shop });
+    if (shopSessions[0]?.role !== "RETAIL") {
         return Response.json({ success: false, message: "Unauthorized" }, { status: 403 });
     }
 
@@ -55,10 +52,12 @@ export const action = async ({ request }) => {
     const value = parseFloat(formData.get("value")) || 1.0;
     const rounding = formData.get("rounding") || "none";
 
-    await db.pricingRule.upsert({
-        where: { shop: session.shop },
-        update: { enabled, mode, value, rounding },
-        create: { shop: session.shop, enabled, mode, value, rounding },
+    await convex.mutation(api.pricing.upsertPricingRule, {
+        shop: session.shop,
+        enabled,
+        mode,
+        value,
+        rounding,
     });
 
     return Response.json({ success: true, message: "Pricing rules saved!" });

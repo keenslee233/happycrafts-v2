@@ -1,5 +1,6 @@
 import { authenticate } from "../shopify.server";
-import db from "../db.server";
+import { api } from "../../convex/_generated/api.js";
+import convex from "../db.server";
 
 export const action = async ({ request }) => {
   const { shop, session, topic } = await authenticate.webhook(request);
@@ -9,7 +10,11 @@ export const action = async ({ request }) => {
   // Webhook requests can trigger multiple times and after an app has already been uninstalled.
   // If this webhook already ran, the session may have been deleted previously.
   if (session) {
-    await db.session.deleteMany({ where: { shop } });
+    // Delete sessions for this shop in Convex
+    const shopSessions = await convex.query(api.sessions.findSessionsByShop, { shop });
+    for (const s of shopSessions) {
+        await convex.mutation(api.sessions.deleteSession, { id: s._id });
+    }
   }
 
   return new Response();

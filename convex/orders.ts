@@ -9,9 +9,21 @@ export const listOrders = query({
       return await ctx.db
         .query("pushedOrders")
         .withIndex("by_shop", (q) => q.eq("shop", shop))
+        .order("desc")
         .collect();
     }
-    return await ctx.db.query("pushedOrders").collect();
+    return await ctx.db.query("pushedOrders").order("desc").collect();
+  },
+});
+
+export const listOrdersByMaster = query({
+  args: { masterStoreId: v.string() },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("pushedOrders")
+      .withIndex("by_masterStoreId", (q) => q.eq("masterStoreId", args.masterStoreId))
+      .order("desc")
+      .collect();
   },
 });
 

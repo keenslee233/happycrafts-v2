@@ -15,16 +15,17 @@ import {
     Frame,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
-import db from "../db.server";
+import { api } from "../../convex/_generated/api.js";
+import convex from "../db.server";
 import { useState, useEffect } from "react";
 
 export const loader = async ({ request }) => {
     const { admin, session } = await authenticate.admin(request);
 
     // 1. Verify Role (Master store should have WHOLESALE role)
-    const shopSession = await db.session.findUnique({ where: { id: session.id } });
-    // For demo purposes, we might relax this or ensure it's set.
-
+    const shopSessions = await convex.query(api.sessions.findSessionsByShop, { shop: session.shop });
+    // Check role if needed
+    
     // 2. Fetch products from Shopify Admin
     const response = await admin.graphql(`
     query getProducts {
@@ -50,11 +51,8 @@ export const loader = async ({ request }) => {
     const resData = await response.json();
     const shopifyProducts = resData.data.products.nodes;
 
-    // 3. Fetch public SKUs from DB
-    const publicInventory = await db.inventory.findMany({
-        where: { isPublic: true },
-        select: { sku: true }
-    });
+    // 3. Fetch public SKUs from Convex
+    const publicInventory = await convex.query(api.inventory.listPublicInventory);
     const publicSkus = new Set(publicInventory.map(i => i.sku));
 
     return { shopifyProducts, publicSkus };
@@ -72,26 +70,19 @@ export const action = async ({ request }) => {
         for (const prod of productsToMark) {
             if (!prod.sku) continue;
 
-            await db.inventory.upsert({
-                where: { sku: prod.sku },
-                update: {
-                    productName: prod.title,
-                    description: prod.description,
-                    imageUrl: prod.imageUrl,
-                    masterCostPrice: parseFloat(prod.price),
-                    masterStoreId: session.shop,
-                    isPublic: true,
-                },
-                create: {
-                    sku: prod.sku,
-                    productName: prod.title,
-                    description: prod.description,
-                    imageUrl: prod.imageUrl,
-                    stockLevel: 0,
-                    masterCostPrice: parseFloat(prod.price),
-                    masterStoreId: session.shop,
-                    isPublic: true,
-                },
+            // Find existing local inventory for stock level if it exists
+            const existingInv = await convex.query(api.inventory.getInventoryBySku, { sku: prod.sku });
+
+            await convex.mutation(api.inventory.upsertInventory, {
+                sku: prod.sku,
+                productName: prod.title,
+                description: prod.description || undefined,
+                imageUrl: prod.imageUrl || undefined,
+                stockLevel: existingInv?.stockLevel || 0,
+                masterCostPrice: parseFloat(prod.price),
+                masterStoreId: session.shop,
+                isListed: existingInv?.isListed || false,
+                isPublic: true,
             });
         }
 

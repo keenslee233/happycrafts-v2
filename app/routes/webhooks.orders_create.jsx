@@ -1,5 +1,4 @@
 import { authenticate } from "../shopify.server";
-import db from "../db.server";
 import { forwardOrder } from "../utils/order-forwarding.server";
 
 export const action = async ({ request }) => {
