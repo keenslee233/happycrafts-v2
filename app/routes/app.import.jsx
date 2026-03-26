@@ -1,7 +1,10 @@
 import { authenticate } from "../shopify.server";
-import db from "../db.server";
+import { ConvexHttpClient } from "convex/browser";
+import { api } from "../../convex/_generated/api.js";
 import { createAdminApiClient } from "@shopify/admin-api-client";
 import { applyPricingRule } from "../utils/pricing.server.js";
+
+const convex = new ConvexHttpClient(process.env.CONVEX_URL);
 
 /**
  * Imports one or more products from the Master store to a Retail store.
@@ -31,11 +34,11 @@ export const action = async ({ request }) => {
 
   try {
     // ── 2. FETCH PRICING RULE ONCE ──
-    const pricingRule = await db.pricingRule.findUnique({
-      where: { shop: retailShop }
+    const pricingRule = await convex.query(api.pricing.getPricingRuleByShop, {
+      shop: retailShop
     });
 
-    const retailClient = createAdminApiClient({
+    const shopifyClient = createAdminApiClient({
       storeDomain: retailShop,
       apiVersion: "2026-01",
       accessToken: session.accessToken,
@@ -51,8 +54,8 @@ export const action = async ({ request }) => {
         console.log(`Importing SKU: ${sku}...`);
 
         // Find product in Inventory to get masterStoreId
-        const inventoryItem = await db.inventory.findUnique({
-          where: { sku: sku }
+        const inventoryItem = await convex.query(api.inventory.getInventoryBySku, {
+          sku: sku
         });
 
         if (!inventoryItem || !inventoryItem.masterStoreId) {
@@ -63,8 +66,9 @@ export const action = async ({ request }) => {
         }
 
         // Get the specific Master session
-        const wholesaleSession = await db.session.findFirst({
-          where: { shop: inventoryItem.masterStoreId, role: 'WHOLESALE' }
+        const wholesaleSession = await convex.query(api.sessions.findSessionByShopAndRole, {
+          shop: inventoryItem.masterStoreId,
+          role: 'WHOLESALE'
         });
 
         if (!wholesaleSession) {
@@ -116,7 +120,7 @@ export const action = async ({ request }) => {
         const uniqueHandle = `imported-${sku.toLowerCase()}-${Date.now()}`;
 
         console.log(`Creating product with SKU=${sku}, Price=$${retailPrice}...`);
-        const createResponse = await retailClient.request(`
+        const createResponse = await shopifyClient.request(`
           mutation productSet($input: ProductSetInput!) {
             productSet(input: $input) {
               product {
@@ -205,7 +209,7 @@ export const action = async ({ request }) => {
 
         if (mediaInput.length > 0) {
           try {
-            await retailClient.request(`
+            await shopifyClient.request(`
               mutation productCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
                 productCreateMedia(productId: $productId, media: $media) {
                   mediaUserErrors { field message }
@@ -222,30 +226,31 @@ export const action = async ({ request }) => {
           }
         }
 
-        // ── SAVE MAPPING IN PRISMA ──
-        await db.productMapping.create({
-          data: {
-            masterSku: sku,
-            retailShop: retailShop,
-            retailProductId: newProduct.id,
-            retailVariantId: defaultVariantId || "",
-            retailSku: sku
-          }
+        // ── SAVE MAPPING IN CONVEX ──
+        await convex.mutation(api.productMappings.createMapping, {
+          masterSku: sku,
+          retailShop: retailShop,
+          retailProductId: newProduct.id,
+          retailVariantId: defaultVariantId || "",
+          retailSku: sku,
+          createdAt: Date.now()
         });
 
-        await db.inventory.upsert({
-          where: { sku: sku },
-          update: { productName: wsProduct.title, stockLevel: variantData.inventoryQuantity || 0, retailProductId: newProduct.id },
-          create: { sku, productName: wsProduct.title, stockLevel: variantData.inventoryQuantity || 0, retailProductId: newProduct.id }
+        await convex.mutation(api.inventory.upsertInventory, {
+          sku: sku,
+          productName: wsProduct.title,
+          stockLevel: variantData.inventoryQuantity || 0,
+          retailProductId: newProduct.id,
+          masterStoreId: inventoryItem.masterStoreId,
+          masterCostPrice: inventoryItem.masterCostPrice
         });
 
-        await db.syncLog.create({
-          data: {
-            shop: retailShop,
-            sku: sku,
-            status: "SUCCESS",
-            message: `Imported "${wsProduct.title}" ($${masterPrice} → $${retailPrice})`,
-          }
+        await convex.mutation(api.syncLogs.createLog, {
+          shop: retailShop,
+          sku: sku,
+          status: "SUCCESS",
+          message: `Imported "${wsProduct.title}" ($${masterPrice} → $${retailPrice})`,
+          createdAt: Date.now()
         });
 
         console.log(`✓ SKU ${sku}: "${wsProduct.title}" → $${retailPrice}`);

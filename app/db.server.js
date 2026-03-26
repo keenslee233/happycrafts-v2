@@ -1,13 +1,7 @@
-import { PrismaClient } from "@prisma/client";
+import { ConvexHttpClient } from "convex/browser";
+import { api } from "../convex/_generated/api.js";
 
-const databaseUrl = process.env.INTERNAL_DATABASE_URL || process.env.DATABASE_URL;
+const convex = new ConvexHttpClient(process.env.CONVEX_URL);
 
-const prisma = global.prismaGlobal ?? new PrismaClient({
-  datasources: {
-    db: {
-      url: databaseUrl,
-    },
-  },
-});
-
-export default prisma;
+export { convex, api };
+export default convex;

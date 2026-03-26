@@ -1,0 +1,17 @@
+[build]
+  command = "npm run build"
+  publish = "build/client"
+
+[functions]
+  directory = "build/server"
+
+[[redirects]]
+  from = "/*"
+  to = "/.netlify/functions/server"
+  status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "ALLOWALL"
+    Content-Security-Policy = "frame-ancestors *; report-uri /csp-report"

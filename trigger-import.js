@@ -1,19 +1,18 @@
 import { createAdminApiClient } from "@shopify/admin-api-client";
-import { PrismaClient } from "@prisma/client";
+import { ConvexHttpClient } from "convex/browser";
+import { api } from "./convex/_generated/api.js";
 import { applyPricingRule } from "./app/utils/pricing.server.js";
+import 'dotenv/config';
 
-const db = new PrismaClient();
+const client = new ConvexHttpClient(process.env.CONVEX_URL);
 
-/**
- * End-to-end test that mirrors the exact logic in app.import.jsx
- * using productSet mutation. Tests SKU 1221 import.
- */
 async function run() {
   const sku = '1221';
   const retailShop = 'happycrafts-retail.myshopify.com';
 
-  const wholesaleSession = await db.session.findFirst({ where: { role: 'WHOLESALE' } });
-  const retailSession = await db.session.findFirst({ where: { shop: retailShop } });
+  const wholesaleSession = await client.query(api.sessions.findSessionByRole, { role: 'WHOLESALE' });
+  const retailSession = await client.query(api.sessions.findSessionsByShop, { shop: retailShop }).then(s => s[0]);
+  
   if (!wholesaleSession || !retailSession) return console.log("MISSING SESSIONS");
 
   const wholesaleClient = createAdminApiClient({
@@ -24,7 +23,7 @@ async function run() {
   });
 
   // Fetch pricing rule
-  const pricingRule = await db.pricingRule.findUnique({ where: { shop: retailShop } });
+  const pricingRule = await client.query(api.pricing.getPricingRule, { shop: retailShop });
   console.log(`Pricing Rule: ${pricingRule?.enabled ? pricingRule.mode + ' ' + pricingRule.value : 'disabled/none'}`);
 
   // Fetch product from Master
@@ -48,7 +47,7 @@ async function run() {
   const retailPrice = applyPricingRule(masterPrice, pricingRule);
   console.log(`Found: "${wsProduct.title}" — Master: $${masterPrice}, Retail: $${retailPrice}`);
 
-  // productSet — same as app.import.jsx
+  // productSet
   const uniqueHandle = `imported-${sku.toLowerCase()}-${Date.now()}`;
   console.log(`\n=== productSet (SKU=${sku}, Price=$${retailPrice}) ===`);
   const createResponse = await retailClient.request(`
@@ -94,25 +93,31 @@ async function run() {
   const createdVariant = newProduct?.variants?.nodes?.[0];
   const defaultVariantId = createdVariant?.id;
 
-  // Save to Prisma (same as app.import.jsx)
-  console.log(`\n=== Saving to Prisma ===`);
-  await db.productMapping.create({
-    data: {
-      masterSku: sku, retailShop,
-      retailProductId: newProduct.id,
-      retailVariantId: defaultVariantId || "",
-      retailSku: sku
-    }
+  // Save to Convex
+  console.log(`\n=== Saving to Convex ===`);
+  await client.mutation(api.productMappings.upsertMapping, {
+    masterSku: sku, retailShop,
+    retailProductId: newProduct.id,
+    retailVariantId: defaultVariantId || "",
+    retailSku: sku,
+    createdAt: Date.now()
   });
 
-  await db.inventory.upsert({
-    where: { sku },
-    update: { productName: wsProduct.title, stockLevel: variantData.inventoryQuantity || 0, retailProductId: newProduct.id },
-    create: { sku, productName: wsProduct.title, stockLevel: variantData.inventoryQuantity || 0, retailProductId: newProduct.id }
+  await client.mutation(api.inventory.upsertInventory, {
+    sku, 
+    productName: wsProduct.title, 
+    stockLevel: variantData.inventoryQuantity || 0, 
+    retailProductId: newProduct.id,
+    isListed: true,
+    isPublic: true
   });
 
-  await db.syncLog.create({
-    data: { shop: retailShop, sku, status: "SUCCESS", message: `Imported "${wsProduct.title}" ($${masterPrice} → $${retailPrice})` }
+  await client.mutation(api.syncLogs.createLog, { 
+    shop: retailShop, 
+    sku, 
+    status: "SUCCESS", 
+    message: `Imported "${wsProduct.title}" ($${masterPrice} → $${retailPrice})`,
+    createdAt: Date.now()
   });
 
   // Final verification
@@ -135,11 +140,11 @@ async function run() {
     console.log(`\n❌ FAIL: Expected SKU "${sku}" but got "${createdVariant?.sku}"`);
   }
 
-  // Verify Prisma
-  console.log("\n=== Prisma Records ===");
-  const inv = await db.inventory.findUnique({ where: { sku } });
+  // Verify Convex
+  console.log("\n=== Convex Records ===");
+  const inv = await client.query(api.inventory.getInventoryBySku, { sku });
   console.log(`Inventory: SKU=${inv?.sku}, retailProductId=${inv?.retailProductId}`);
-  const map = await db.productMapping.findFirst({ where: { masterSku: sku, retailShop } });
+  const map = await client.query(api.productMappings.listMappings, { masterSku: sku, retailShop }).then(m => m[0]);
   console.log(`Mapping: masterSku=${map?.masterSku}, retailSku=${map?.retailSku}, retailProductId=${map?.retailProductId}`);
 }
 

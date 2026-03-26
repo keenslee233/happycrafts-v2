@@ -1,13 +1,15 @@
 import { createAdminApiClient } from "@shopify/admin-api-client";
-import { PrismaClient } from "@prisma/client";
+import { ConvexHttpClient } from "convex/browser";
+import { api } from "./convex/_generated/api.js";
+import 'dotenv/config';
 
-const db = new PrismaClient();
+const client = new ConvexHttpClient(process.env.CONVEX_URL);
 
 async function run() {
-    const wholesaleSession = await db.session.findFirst({ where: { role: "WHOLESALE" } });
+    const wholesaleSession = await client.query(api.sessions.findSessionByRole, { role: "WHOLESALE" });
     if (!wholesaleSession) return console.log("No wholesale session");
 
-    const client = createAdminApiClient({
+    const shopifyClient = createAdminApiClient({
         storeDomain: wholesaleSession.shop,
         apiVersion: "2026-01",
         accessToken: wholesaleSession.accessToken,
@@ -38,7 +40,7 @@ async function run() {
         }
     `;
 
-    const response = await client.request(query);
+    const response = await shopifyClient.request(query);
     const draftOrders = response.data?.draftOrders?.nodes || [];
 
     console.log(`\n📦 Recent Draft Orders on Master (${wholesaleSession.shop}):`);

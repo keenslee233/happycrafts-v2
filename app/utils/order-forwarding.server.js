@@ -1,4 +1,7 @@
-import { createAdminApiClient } from "@shopify/admin-api-client";
+import { ConvexHttpClient } from "convex/browser";
+import { api } from "../../convex/_generated/api.js";
+
+const convex = new ConvexHttpClient(process.env.CONVEX_URL);
 
 /**
  * Forwards a retail order to a wholesale master store as a draft order.
@@ -6,24 +9,22 @@ import { createAdminApiClient } from "@shopify/admin-api-client";
  * @param {Object} params
  * @param {string} params.shop - The retail shop domain (e.g. retail.myshopify.com)
  * @param {Object} params.order - The Shopify Order object (payload)
- * @param {Object} params.db - Prisma client instance
  * @returns {Promise<Object>} The result of the forwarding operation
  */
-export async function forwardOrder({ shop, order, db }) {
+export async function forwardOrder({ shop, order }) {
     const lineItems = order.line_items || [];
     const sourceName = order.source_name || "unknown";
     console.log(`\n🔔 [DEBUG] Processing Order ${order.name} from ${shop} (Source: ${sourceName})`);
 
     // ── 0. CHECK: Is order already pushed? ──
-    const existingPush = await db.pushedOrder.findFirst({
-        where: { retailOrderId: order.id.toString(), shop }
-    });
+    const existingPush = await convex.query(api.orders.getOrderByRetailId, { retailOrderId: order.id.toString() });
     if (existingPush) {
         return { success: false, message: `Order ${order.name} has already been pushed to Master.` };
     }
 
     // ── 1. CHECK: Only Retail stores forward orders ──
-    const currentSession = await db.session.findFirst({ where: { shop } });
+    const currentSessions = await convex.query(api.sessions.findSessionsByShop, { shop });
+    const currentSession = currentSessions[0];
     if (currentSession?.role !== "RETAIL") {
         return { success: false, message: "Ignoring order — sender is not a Retail store." };
     }
@@ -37,9 +38,7 @@ export async function forwardOrder({ shop, order, db }) {
             continue;
         }
 
-        const inventoryItem = await db.inventory.findUnique({
-            where: { sku: item.sku }
-        });
+        const inventoryItem = await convex.query(api.inventory.getInventoryBySku, { sku: item.sku });
 
         if (!inventoryItem) {
             console.log(`  ❌ [DEBUG] No SKU Match Found: ${item.sku}`);
@@ -50,9 +49,9 @@ export async function forwardOrder({ shop, order, db }) {
 
         // Deduct stock locally
         const newStock = Math.max(0, inventoryItem.stockLevel - item.quantity);
-        await db.inventory.update({
-            where: { sku: item.sku },
-            data: { stockLevel: newStock }
+        await convex.mutation(api.inventory.upsertInventory, {
+            ...inventoryItem,
+            stockLevel: newStock
         });
 
         matchedItems.push({
@@ -70,8 +69,9 @@ export async function forwardOrder({ shop, order, db }) {
 
     // ── 3. GET WHOLESALE MASTER SESSION based on the first matched item's masterStoreId ──
     const targetMasterStoreId = matchedItems[0].masterStoreId;
-    const wholesaleSession = await db.session.findFirst({
-        where: { shop: targetMasterStoreId, role: "WHOLESALE" }
+    const wholesaleSession = await convex.query(api.sessions.findSessionByShopAndRole, {
+        shop: targetMasterStoreId || "",
+        role: "WHOLESALE"
     });
 
     if (!wholesaleSession) {
@@ -135,46 +135,42 @@ export async function forwardOrder({ shop, order, db }) {
 
         if (userErrors?.length > 0) {
             console.error("❌ Draft Order userErrors:", JSON.stringify(userErrors, null, 2));
-            await db.syncLog.create({
-                data: {
-                    shop, sku: "ORDER_FORWARD", status: "FAILED",
-                    message: `Order ${order.name}: Draft order failed — ${userErrors[0].message}`,
-                }
+            await convex.mutation(api.syncLogs.createLog, {
+                shop, sku: "ORDER_FORWARD", status: "FAILED",
+                message: `Order ${order.name}: Draft order failed — ${userErrors[0].message}`,
+                createdAt: Date.now()
             });
             return { success: false, message: userErrors[0].message };
         } else if (draftOrder) {
             console.log(`✅ Draft Order created: ${draftOrder.name} (${draftOrder.id})`);
 
-            // Create record in PushedOrders table
-            await db.pushedOrder.create({
-                data: {
-                    retailOrderId: order.id.toString(),
-                    masterDraftOrderId: draftOrder.id,
-                    shop,
-                    masterStoreId: wholesaleSession.shop,
-                    totalItems: matchedItems.reduce((s, i) => s + i.quantity, 0),
-                    totalAmount: totalAmount,
-                    customerEmail: order.email || "N/A",
-                    shippingCity: order.shipping_address?.city || "N/A",
-                }
+            // Create record in pokedOrders table
+            await convex.mutation(api.orders.createOrder, {
+                retailOrderId: order.id.toString(),
+                masterDraftOrderId: draftOrder.id,
+                shop,
+                masterStoreId: wholesaleSession.shop,
+                totalItems: matchedItems.reduce((s, i) => s + i.quantity, 0),
+                totalAmount: totalAmount,
+                customerEmail: order.email || "N/A",
+                shippingCity: order.shipping_address?.city || "N/A",
+                createdAt: Date.now()
             });
 
-            // Log per-SKU entries for the dashboard
+            // Log per-SKU entries
             for (const matchedItem of matchedItems) {
-                await db.syncLog.create({
-                    data: {
-                        shop, sku: matchedItem.sku, status: "BROADCAST",
-                        message: `Order forwarded to Master for SKU ${matchedItem.sku} (${order.name} → ${draftOrder.name})`,
-                    }
+                await convex.mutation(api.syncLogs.createLog, {
+                    shop, sku: matchedItem.sku, status: "BROADCAST",
+                    message: `Order forwarded to Master for SKU ${matchedItem.sku} (${order.name} → ${draftOrder.name})`,
+                    createdAt: Date.now()
                 });
             }
 
             // Also log the overall forward event
-            await db.syncLog.create({
-                data: {
-                    shop, sku: "ORDER_FORWARD", status: "BROADCAST",
-                    message: `Order ${order.name} → Draft ${draftOrder.name} (${matchedItems.length} item${matchedItems.length > 1 ? 's' : ''})`,
-                }
+            await convex.mutation(api.syncLogs.createLog, {
+                shop, sku: "ORDER_FORWARD", status: "BROADCAST",
+                message: `Order ${order.name} → Draft ${draftOrder.name} (${matchedItems.length} item${matchedItems.length > 1 ? 's' : ''})`,
+                createdAt: Date.now()
             });
 
             return { success: true, draftOrderId: draftOrder.id, draftOrderName: draftOrder.name };
@@ -184,12 +180,12 @@ export async function forwardOrder({ shop, order, db }) {
 
     } catch (e) {
         console.error("❌ Draft Order creation EXCEPTION:", e.message);
-        await db.syncLog.create({
-            data: {
-                shop, sku: "ORDER_FORWARD", status: "FAILED",
-                message: `Order ${order.name}: Exception — ${e.message}`,
-            }
+        await convex.mutation(api.syncLogs.createLog, {
+            shop, sku: "ORDER_FORWARD", status: "FAILED",
+            message: `Order ${order.name}: Exception — ${e.message}`,
+            createdAt: Date.now()
         });
         return { success: false, message: e.message };
     }
 }
+

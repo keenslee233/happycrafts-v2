@@ -1,14 +1,17 @@
+import { ConvexHttpClient } from "convex/browser";
+import { api } from "./convex/_generated/api.js";
 import { createAdminApiClient } from "@shopify/admin-api-client";
-import { PrismaClient } from "@prisma/client";
+import 'dotenv/config';
 
-const db = new PrismaClient();
+const client = new ConvexHttpClient(process.env.CONVEX_URL);
 
 async function run() {
   const masterSku = '1221';
   const retailShopDomain = 'happycrafts-retail.myshopify.com';
 
-  const wholesaleSession = await db.session.findFirst({ where: { role: 'WHOLESALE' } });
-  const retailSession = await db.session.findFirst({ where: { shop: retailShopDomain } });
+  const wholesaleSession = await client.query(api.sessions.findSessionByRole, { role: 'WHOLESALE' });
+  const retailSession = await client.query(api.sessions.findSessionsByShop, { shop: retailShopDomain }).then(s => s[0]);
+  
   if (!wholesaleSession || !retailSession) return console.log("MISSING SESSIONS");
 
   const wholesaleClient = createAdminApiClient({
@@ -40,20 +43,16 @@ async function run() {
   const retailPrice = parseFloat(variantData.price);
   const uniqueHandle = `imported-${masterSku.toLowerCase()}-${Date.now()}`;
 
-  // Test: productSet mutation (single atomic call)
+  // Test: productSet mutation
   console.log("\n=== Testing productSet ===");
   const response = await retailClient.request(`
     mutation productSet($input: ProductSetInput!) {
       productSet(input: $input) {
         product {
-          id
-          title
-          handle
+          id title handle
           variants(first: 1) {
             nodes {
-              id
-              sku
-              price
+              id sku price
               inventoryItem { id sku tracked }
             }
           }

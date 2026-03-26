@@ -1,12 +1,14 @@
 import { createAdminApiClient } from "@shopify/admin-api-client";
-import { PrismaClient } from "@prisma/client";
+import { ConvexHttpClient } from "convex/browser";
+import { api } from "./convex/_generated/api.js";
+import 'dotenv/config';
 
-const db = new PrismaClient();
+const client = new ConvexHttpClient(process.env.CONVEX_URL);
 
 /**
  * Simulates the order forwarding flow by directly calling the
  * same logic as webhooks.orders_create.jsx.
- * Tests: SKU matching → Master Cost lookup → draftOrderCreate → Prisma logging
+ * Tests: SKU matching → Master Cost lookup → draftOrderCreate → Convex logging
  */
 async function run() {
     const retailShop = 'happycrafts-retail.myshopify.com';
@@ -36,7 +38,7 @@ async function run() {
     // ── Step 1: Match SKUs ──
     const matchedItems = [];
     for (const item of fakeOrder.line_items) {
-        const inv = await db.inventory.findUnique({ where: { sku: item.sku } });
+        const inv = await client.query(api.inventory.getInventoryBySku, { sku: item.sku });
         if (inv) {
             console.log(`  ✓ Matched: SKU ${item.sku} — "${inv.productName}"`);
             matchedItems.push({
@@ -54,7 +56,7 @@ async function run() {
     if (matchedItems.length === 0) return console.log("❌ No matches");
 
     // ── Step 2: Prepare Draft Order Data ──
-    const wholesaleSession = await db.session.findFirst({ where: { role: "WHOLESALE" } });
+    const wholesaleSession = await client.query(api.sessions.findSessionByRole, { role: "WHOLESALE" });
     if (!wholesaleSession) return console.log("❌ No wholesale session");
 
     const draftLineItems = matchedItems.map(item => ({
@@ -100,35 +102,34 @@ async function run() {
         if (userErrors?.length > 0) {
             console.log("\n❌ Draft Order userErrors:", JSON.stringify(userErrors, null, 2));
         } else if (draftOrder || wholesaleSession.accessToken.startsWith('shpat_fake')) {
-            // If it's a fake token, we simulate success for the sake of testing the Prisma logging
+            // If it's a fake token, we simulate success for the sake of testing
             const mockDraftOrder = draftOrder || { id: "gid://shopify/DraftOrder/12345", name: "#DRAFT-123" };
 
             console.log(`\n✅ Mocking/Real Success: ${mockDraftOrder.name}`);
 
             // ── Step 4: Log to PushedOrder table ──
-            await db.pushedOrder.create({
-                data: {
-                    retailOrderId: "123456789", // fake external ID
-                    masterDraftOrderId: mockDraftOrder.id,
-                    shop: retailShop,
-                    totalItems: matchedItems.reduce((s, i) => s + i.quantity, 0),
-                    totalAmount: totalAmount,
-                }
+            await client.mutation(api.orders.createOrder, {
+                retailOrderId: "123456789", // fake external ID
+                masterDraftOrderId: mockDraftOrder.id,
+                shop: retailShop,
+                totalItems: matchedItems.reduce((s, i) => s + i.quantity, 0),
+                totalAmount: totalAmount,
+                createdAt: Date.now()
             });
-            console.log("✓ Record created in PushedOrder table");
+            console.log("✓ Record created in pokedOrders table");
 
             // Log to SyncLog for Recent Activity
-            await db.syncLog.create({
-                data: {
-                    shop: retailShop, sku: "ORDER_FORWARD", status: "BROADCAST",
-                    message: `Order ${fakeOrder.name} → Draft ${mockDraftOrder.name} (${matchedItems.length} item(s))`,
-                }
+            await client.mutation(api.syncLogs.createLog, {
+                shop: retailShop, 
+                sku: "ORDER_FORWARD", 
+                status: "BROADCAST",
+                message: `Order ${fakeOrder.name} → Draft ${mockDraftOrder.name} (${matchedItems.length} item(s))`,
+                createdAt: Date.now()
             });
-            console.log("✓ Record created in SyncLog table");
+            console.log("✓ Record created in syncLogs table");
         }
     } catch (e) {
         console.error("\n❌ API Exception (Expected if token is fake):", e.message);
-        // Even if API fails, we've verified the data preparation logic
     }
 }
 

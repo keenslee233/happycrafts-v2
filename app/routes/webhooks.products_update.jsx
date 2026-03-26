@@ -1,6 +1,9 @@
 import { authenticate } from "../shopify.server";
-import db from "../db.server";
+import { ConvexHttpClient } from "convex/browser";
+import { api } from "../../convex/_generated/api.js";
 import { updateRetailInventory } from "../utils/retailSync.server.js";
+
+const convex = new ConvexHttpClient(process.env.CONVEX_URL);
 
 export const action = async ({ request }) => {
   const { topic, shop, session, admin, payload } = await authenticate.webhook(
@@ -12,9 +15,8 @@ export const action = async ({ request }) => {
   }
 
   // Retrieve the session to find the role
-  const shopSession = await db.session.findFirst({
-    where: { shop: shop }
-  });
+  const shopSessions = await convex.query(api.sessions.findSessionsByShop, { shop });
+  const shopSession = shopSessions[0];
 
   const role = shopSession?.role;
   console.log(`🔔 Webhook received for ${shop}. Role: ${role}`);
@@ -24,49 +26,41 @@ export const action = async ({ request }) => {
     case "PRODUCTS_UPDATE":
     case "products/update":
 
-      // LOGIC:
-      // 1. Always update local inventory (so we have a record).
-      // 2. IF valid role = WHOLESALE, broadcast to Retailers.
-
       if (payload.variants) {
         for (const variant of payload.variants) {
           if (variant.sku) {
             // 1. Update Local Inventory
-            await db.inventory.upsert({
-              where: { sku: variant.sku },
-              update: {
-                productName: payload.title,
-                stockLevel: variant.inventory_quantity
-              },
-              create: {
-                sku: variant.sku,
-                productName: payload.title,
-                stockLevel: variant.inventory_quantity
-              }
+            const inv = await convex.query(api.inventory.getInventoryBySku, { sku: variant.sku });
+            await convex.mutation(api.inventory.upsertInventory, {
+              sku: variant.sku,
+              productName: payload.title,
+              stockLevel: variant.inventory_quantity,
+              masterStoreId: inv?.masterStoreId,
+              masterCostPrice: inv?.masterCostPrice,
+              retailProductId: inv?.retailProductId
             });
 
             // Log Local Sync
             try {
-              await db.syncLog.create({
-                data: {
-                  shop: shop,
-                  sku: variant.sku,
-                  status: "SUCCESS",
-                  message: `Updated local inventory to ${variant.inventory_quantity}`,
-                }
+              await convex.mutation(api.syncLogs.createLog, {
+                shop: shop,
+                sku: variant.sku,
+                status: "SUCCESS",
+                message: `Updated local inventory to ${variant.inventory_quantity}`,
+                createdAt: Date.now()
               });
             } catch (e) {
               console.error("Failed to write to SyncLog:", e);
             }
 
-            console.log(`✅ Prisma Sync Success for SKU: ${variant.sku}`);
+            console.log(`✅ Convex Sync Success for SKU: ${variant.sku}`);
 
             // 2. Broadcast if WHOLESALE
             if (role === "WHOLESALE") {
               console.log(`📡 Initiating Broadcast for SKU ${variant.sku}...`);
 
-              const retailPartners = await db.session.findMany({
-                where: { role: "RETAIL" }
+              const retailPartners = await convex.query(api.sessions.findSessionsByRole, {
+                role: "RETAIL"
               });
 
               console.log(`📡 Found ${retailPartners.length} Retail Partners.`);
@@ -80,13 +74,12 @@ export const action = async ({ request }) => {
 
                 // Log Broadcast
                 try {
-                  await db.syncLog.create({
-                    data: {
-                      shop: shop,
-                      sku: variant.sku,
-                      status: "BROADCAST",
-                      message: `Sent update to Retail Partner: ${partner.shop}`,
-                    }
+                  await convex.mutation(api.syncLogs.createLog, {
+                    shop: shop,
+                    sku: variant.sku,
+                    status: "BROADCAST",
+                    message: `Sent update to Retail Partner: ${partner.shop}`,
+                    createdAt: Date.now()
                   });
                 } catch (e) {
                   console.error("Failed to write Broadcast Log:", e);
@@ -112,3 +105,4 @@ export const action = async ({ request }) => {
 
   throw new Response();
 };
+

@@ -75,8 +75,7 @@ export const loader = async ({ request }) => {
     // 3. Call the shared forwarding utility
     const result = await forwardOrder({
         shop: session.shop,
-        order,
-        db
+        order
     });
 
     if (result.success) {

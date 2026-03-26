@@ -1,5 +1,8 @@
 import { createAdminApiClient } from '@shopify/admin-api-client';
-import db from '../db.server';
+import { ConvexHttpClient } from "convex/browser";
+import { api } from "../../convex/_generated/api.js";
+
+const convex = new ConvexHttpClient(process.env.CONVEX_URL);
 
 export async function updateRetailInventory(shop, accessToken, sku, quantity) {
   if (!shop || !accessToken) {
@@ -13,7 +16,7 @@ export async function updateRetailInventory(shop, accessToken, sku, quantity) {
   console.log(`🔄 Syncing SKU ${sku} to Retail Store: ${shopName} (Qty: ${quantity})`);
 
   try {
-    const client = createAdminApiClient({
+    const shopifyClient = createAdminApiClient({
       storeDomain: shopName,
       apiVersion: '2026-01',
       accessToken: accessToken,
@@ -23,13 +26,9 @@ export async function updateRetailInventory(shop, accessToken, sku, quantity) {
     let locationId = null;
 
     // 1. Check for Mapping First
-    const mapping = await db.productMapping.findUnique({
-      where: {
-        masterSku_retailShop: {
-          masterSku: sku,
-          retailShop: shop,
-        }
-      }
+    const mapping = await convex.query(api.productMappings.getMappingByMasterSkuAndShop, {
+      masterSku: sku,
+      retailShop: shop,
     });
 
     if (mapping) {
@@ -48,7 +47,7 @@ export async function updateRetailInventory(shop, accessToken, sku, quantity) {
           }
         }
       `;
-      const { data } = await client.request(getVariantQuery, { variables: { id: mapping.retailVariantId } });
+      const { data } = await shopifyClient.request(getVariantQuery, { variables: { id: mapping.retailVariantId } });
       const variant = data?.productVariant;
       if (variant) {
         inventoryItemId = variant.inventoryItem.id;
@@ -78,7 +77,7 @@ export async function updateRetailInventory(shop, accessToken, sku, quantity) {
           }
         }
       `;
-      const { data: findData } = await client.request(findVariantQuery, { variables: { query: `sku:${sku}` } });
+      const { data: findData } = await shopifyClient.request(findVariantQuery, { variables: { query: `sku:${sku}` } });
       const edges = findData?.productVariants?.edges;
       if (edges && edges.length > 0) {
         const variantNode = edges[0].node;
@@ -110,7 +109,7 @@ export async function updateRetailInventory(shop, accessToken, sku, quantity) {
       }
     `;
 
-    const { data: updateData, errors: updateErrors } = await client.request(setQuantityMutation, {
+    const { data: updateData, errors: updateErrors } = await shopifyClient.request(setQuantityMutation, {
       variables: {
         input: {
           name: "available",
@@ -139,3 +138,4 @@ export async function updateRetailInventory(shop, accessToken, sku, quantity) {
     console.error(`❌ Network/Client error syncing to Retail ${shopName}:`, error);
   }
 }
+

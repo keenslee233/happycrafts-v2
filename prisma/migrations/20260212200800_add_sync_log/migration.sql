@@ -1,9 +1,0 @@
--- CreateTable
-CREATE TABLE "SyncLog" (
-    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-    "shop" TEXT NOT NULL,
-    "sku" TEXT NOT NULL,
-    "status" TEXT NOT NULL,
-    "message" TEXT NOT NULL,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);

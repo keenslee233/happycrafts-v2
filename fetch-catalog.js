@@ -1,17 +1,12 @@
 import { createAdminApiClient } from "@shopify/admin-api-client";
-import { PrismaClient } from "@prisma/client";
+import { ConvexHttpClient } from "convex/browser";
+import { api } from "./convex/_generated/api.js";
+import 'dotenv/config';
 
-const db = new PrismaClient();
+const client = new ConvexHttpClient(process.env.CONVEX_URL);
 
-/**
- * Fetches all products from the Wholesale Master store and populates
- * the Prisma Inventory table. This restores the dashboard catalog
- * without needing webhook triggers.
- */
 async function fetchCatalog() {
-    const wholesaleSession = await db.session.findFirst({
-        where: { role: 'WHOLESALE' }
-    });
+    const wholesaleSession = await client.query(api.sessions.findSessionByRole, { role: 'WHOLESALE' });
 
     if (!wholesaleSession) {
         console.log("❌ No WHOLESALE session found.");
@@ -20,7 +15,7 @@ async function fetchCatalog() {
 
     console.log(`\n📦 Fetching catalog from Master: ${wholesaleSession.shop}\n`);
 
-    const client = createAdminApiClient({
+    const shopifyClient = createAdminApiClient({
         storeDomain: wholesaleSession.shop,
         apiVersion: "2026-01",
         accessToken: wholesaleSession.accessToken,
@@ -51,7 +46,7 @@ async function fetchCatalog() {
       }
     `;
 
-        const response = await client.request(query, {
+        const response = await shopifyClient.request(query, {
             variables: { after: cursor }
         });
 
@@ -69,17 +64,12 @@ async function fetchCatalog() {
                     continue;
                 }
 
-                await db.inventory.upsert({
-                    where: { sku: variant.sku },
-                    update: {
-                        productName: product.title,
-                        stockLevel: variant.inventoryQuantity || 0,
-                    },
-                    create: {
-                        sku: variant.sku,
-                        productName: product.title,
-                        stockLevel: variant.inventoryQuantity || 0,
-                    }
+                await client.mutation(api.inventory.upsertInventory, {
+                    sku: variant.sku,
+                    productName: product.title,
+                    stockLevel: variant.inventoryQuantity || 0,
+                    isListed: false,
+                    isPublic: false,
                 });
 
                 totalVariants++;
@@ -98,7 +88,7 @@ async function fetchCatalog() {
     console.log(`════════════════════════════════════════\n`);
 
     // Show final inventory
-    const inventory = await db.inventory.findMany({ orderBy: { sku: 'asc' } });
+    const inventory = await client.query(api.inventory.listInventory, {});
     console.log("Current Inventory Table:");
     for (const item of inventory) {
         console.log(`  ${item.sku} — ${item.productName} (Stock: ${item.stockLevel})`);
