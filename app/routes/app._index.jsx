@@ -26,49 +26,67 @@ import convex from "../db.server";
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   
-  // Fetch shop sessions from Convex
+  // 1. Fetch the session first to know the role
   const shopSessions = await convex.query(api.sessions.findSessionsByShop, { shop: session.shop });
   const shopSession = shopSessions[0];
+  const currentRole = shopSession?.role;
 
-  // Fetch recent logs from Convex
-  const logsRaw = await convex.query(api.syncLogs.listLogs, { shop: session.shop });
+  // 2. If no role, return early with minimal data
+  if (!currentRole) {
+    return {
+      role: null,
+      shop: session.shop,
+      logs: [],
+      inventory: [],
+      orderCount: 0,
+      mappings: [],
+      wholesaleShop: null,
+      masterPrices: {},
+      masterStock: {},
+      retailPrices: {},
+      pricingEnabled: false,
+      pricingRule: null,
+    };
+  }
+
+  // 3. Parallelize the rest of the queries now that we know we need them
+  const [
+    logsRaw,
+    inventoryRaw,
+    mappingsRaw,
+    wholesaleSessions,
+    pricingRule,
+    pushedOrders
+  ] = await Promise.all([
+    convex.query(api.syncLogs.listLogs, { shop: session.shop }),
+    convex.query(api.inventory.listInventory),
+    convex.query(api.productMappings.listMappings, { retailShop: session.shop }),
+    convex.query(api.sessions.findSessionsByRole, { role: 'WHOLESALE' }),
+    convex.query(api.pricing.getPricingRule, { shop: session.shop }),
+    currentRole === "WHOLESALE" 
+      ? convex.query(api.orders.listOrdersByMaster, { masterStoreId: session.shop })
+      : convex.query(api.orders.listOrders, { shop: session.shop })
+  ]);
   
   const logs = logsRaw.map(log => ({
     ...log,
-    id: log._id, // Map _id to id for the UI
+    id: log._id,
     createdAt: new Date(log.createdAt).toISOString().substring(11, 19),
   }));
 
-  // Calculate order stats from Convex
-  const isWholesale = shopSession?.role === "WHOLESALE";
-  let pushedOrders = [];
-  if (isWholesale) {
-    pushedOrders = await convex.query(api.orders.listOrdersByMaster, { masterStoreId: session.shop });
-  } else {
-    pushedOrders = await convex.query(api.orders.listOrders, { shop: session.shop });
-  }
   const orderCount = pushedOrders.length;
-
-  // Fetch all inventory for Dashboard
-  const inventoryRaw = await convex.query(api.inventory.listInventory);
   const inventory = inventoryRaw.map(item => ({ ...item, id: item._id }));
-
-  // Fetch existing mappings
-  const mappingsRaw = await convex.query(api.productMappings.listMappings, { retailShop: session.shop });
   const mappings = mappingsRaw.map(m => ({ ...m, id: m._id }));
 
-  // Find a Wholesale partner for master data
-  const wholesaleSessions = await convex.query(api.sessions.findSessionsByRole, { role: 'WHOLESALE' });
-  let wholesaleSession = wholesaleSessions.find(s => 
-    shopSession?.role === 'WHOLESALE' ? s.shop === session.shop : true
+  const wholesaleSession = wholesaleSessions.find(s => 
+    currentRole === 'WHOLESALE' ? s.shop === session.shop : true
   );
-
-  // Fetch pricing rule
-  const pricingRule = await convex.query(api.pricing.getPricingRuleByShop, { shop: session.shop });
 
   // Fetch master prices and stock (single bulk query)
   let masterPrices = {};
   let masterStock = {};
+  
+  // OPTIMIZATION: Only do heavy lifting if we have inventory and a partner
   if (wholesaleSession && inventory.length > 0) {
     try {
       console.log(`[Pricing Debug] Fetching master data for ${inventory.length} SKUs...`);
@@ -107,9 +125,6 @@ export const loader = async ({ request }) => {
           }
         }
       }
-
-      console.log(`[Pricing Debug] Populated masterPrices for keys: ${Object.keys(masterPrices).join(', ')}`);
-      console.log(`[Pricing Debug] Populated masterStock for keys: ${Object.keys(masterStock).join(', ')}`);
     } catch (err) {
       console.error("[Pricing Debug] Failed to fetch master data:", err.message);
     }
@@ -144,7 +159,8 @@ export const loader = async ({ request }) => {
 };
 
 export const action = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
+  try {
+    const { session } = await authenticate.admin(request);
   const formData = await request.formData();
   const actionType = formData.get("actionType");
 
@@ -158,10 +174,30 @@ export const action = async ({ request }) => {
     // We already have storeSession mutation.
     const shopSessions = await convex.query(api.sessions.findSessionsByShop, { shop: session.shop });
     const shopSession = shopSessions[0];
-    
+
+    console.log(`[Role Sync] Found ${shopSessions.length} sessions for ${session.shop}. Role to set: ${role}`);
+
     if (shopSession) {
+        // Clean up internal Convex fields (_id, _creationTime) before mutation
+        const { _id, _creationTime, ...sessionData } = shopSession;
+        
+        console.log(`[Role Sync] Updating existing session. Current fields: ${Object.keys(sessionData).join(', ')}`);
+        
         await convex.mutation(api.sessions.storeSession, {
-            ...shopSession,
+            ...sessionData,
+            accountOwner: sessionData.accountOwner || false, // Mandatory field
+            role: role || undefined
+        });
+    } else {
+        console.warn(`[Role Sync] No session found for ${session.shop}. Creating fresh session.`);
+        await convex.mutation(api.sessions.storeSession, {
+            id: session.id,
+            shop: session.shop,
+            state: session.state,
+            isOnline: session.isOnline,
+            scope: session.scope,
+            accessToken: session.accessToken,
+            accountOwner: false, // Mandatory field
             role: role || undefined
         });
     }
@@ -196,7 +232,10 @@ export const action = async ({ request }) => {
     return Response.json({ success: true, message: `Synced ${sku} to ${syncCount} stores.` });
   }
 
-  return Response.json({ success: false });
+  } catch (error) {
+    console.error("Action error:", error);
+    return Response.json({ success: false, error: error.message });
+  }
 };
 
 export default function Index() {
@@ -354,7 +393,11 @@ export default function Index() {
                     <BlockStack gap="400" align="center">
                       <Text variant="headingMd" as="h2">Wholesale Master</Text>
                       <Text as="p" tone="subdued">The source of truth. Inventory updates here are pushed to all retailers.</Text>
-                      <Button variant="primary" onClick={() => fetcher.submit({ actionType: "setRole", role: "WHOLESALE" }, { method: "POST" })}>Select Wholesale</Button>
+                      <fetcher.Form method="POST">
+                        <input type="hidden" name="actionType" value="setRole" />
+                        <input type="hidden" name="role" value="WHOLESALE" />
+                        <Button variant="primary" submit loading={fetcher.state !== 'idle'}>Select Wholesale</Button>
+                      </fetcher.Form>
                     </BlockStack>
                   </Box>
                 </Card>
@@ -365,7 +408,11 @@ export default function Index() {
                     <BlockStack gap="400" align="center">
                       <Text variant="headingMd" as="h2">Retail Partner</Text>
                       <Text as="p" tone="subdued">Receives updates. Inventory is automatically synced from the master store.</Text>
-                      <Button onClick={() => fetcher.submit({ actionType: "setRole", role: "RETAIL" }, { method: "POST" })}>Select Retail</Button>
+                      <fetcher.Form method="POST">
+                        <input type="hidden" name="actionType" value="setRole" />
+                        <input type="hidden" name="role" value="RETAIL" />
+                        <Button submit loading={fetcher.state !== 'idle'}>Select Retail</Button>
+                      </fetcher.Form>
                     </BlockStack>
                   </Box>
                 </Card>
@@ -646,7 +693,11 @@ export default function Index() {
                       </BlockStack>
                     </Box>
                     <Box paddingBlockStart="200">
-                      <Button variant="plain" tone="critical" onClick={() => fetcher.submit({ actionType: "setRole", role: "" }, { method: "POST" })}>Reset Role</Button>
+                      <fetcher.Form method="POST">
+                        <input type="hidden" name="actionType" value="setRole" />
+                        <input type="hidden" name="role" value="" />
+                        <Button variant="plain" tone="critical" submit loading={fetcher.state !== 'idle'}>Reset Role</Button>
+                      </fetcher.Form>
                     </Box>
                   </BlockStack>
                 </Box>

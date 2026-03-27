@@ -32,7 +32,7 @@ export const action = async ({ request }) => {
 
   try {
     // ── 2. FETCH PRICING RULE ONCE ──
-    const pricingRule = await convex.query(api.pricing.getPricingRuleByShop, {
+    const pricingRule = await convex.query(api.pricing.getPricingRule, {
       shop: retailShop
     });
 

@@ -10,19 +10,13 @@ import { convex } from "./db.server";
 const isProd = process.env.NODE_ENV === "production";
 
 if (!process.env.SHOPIFY_API_KEY) {
-  const msg = "CRITICAL: SHOPIFY_API_KEY is not set in environment variables.";
-  if (isProd) throw new Error(msg);
-  else console.warn(msg);
+  console.error("CRITICAL: SHOPIFY_API_KEY is not set in environment variables.");
 }
 if (!process.env.SHOPIFY_API_SECRET) {
-  const msg = "CRITICAL: SHOPIFY_API_SECRET is not set in environment variables.";
-  if (isProd) throw new Error(msg);
-  else console.warn(msg);
+  console.error("CRITICAL: SHOPIFY_API_SECRET is not set in environment variables.");
 }
 if (!process.env.SHOPIFY_APP_URL) {
-  const msg = "CRITICAL: SHOPIFY_APP_URL is not set in environment variables.";
-  if (isProd) throw new Error(msg);
-  else console.warn(msg);
+  console.error("CRITICAL: SHOPIFY_APP_URL is not set in environment variables.");
 }
 
 const shopify = shopifyApp({

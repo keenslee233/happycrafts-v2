@@ -11,6 +11,8 @@ export const getPricingRule = query({
   },
 });
 
+export const getPricingRuleByShop = getPricingRule;
+
 export const upsertPricingRule = mutation({
   args: {
     shop: v.string(),

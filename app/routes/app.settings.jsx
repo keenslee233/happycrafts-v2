@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { useFetcher, useLoaderData } from "react-router";
+import { useFetcher, useLoaderData, useRouteError } from "react-router";
 import {
     Card,
     BlockStack,
@@ -12,29 +12,57 @@ import {
     Divider,
     Badge,
     Banner,
+    Layout,
+    Page,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { api } from "../../convex/_generated/api.js";
 import convex from "../db.server";
 
+export function ErrorBoundary() {
+    const error = useRouteError();
+    console.error("Settings Error:", error);
+
+    return (
+        <Page title="Settings Error">
+            <Layout>
+                <Layout.Section>
+                    <Banner tone="critical">
+                        <Text variant="headingMd" as="h2">There was an error loading your settings</Text>
+                        <p>This is likely due to a connection issue with our database or missing configuration. Please try refreshing the page or contact support if the problem persists.</p>
+                        <p style={{ marginTop: '8px', fontSize: '12px', opacity: 0.7 }}>
+                            Error: {error?.message || "Unknown error"}
+                        </p>
+                    </Banner>
+                </Layout.Section>
+            </Layout>
+        </Page>
+    );
+}
+
 export const loader = async ({ request }) => {
-    const { session } = await authenticate.admin(request);
+    try {
+        const { session } = await authenticate.admin(request);
 
-    const shopSessions = await convex.query(api.sessions.findSessionsByShop, { shop: session.shop });
-    const role = shopSessions[0]?.role || "RETAIL";
+        const shopSessions = await convex.query(api.sessions.findSessionsByShop, { shop: session.shop });
+        const role = shopSessions[0]?.role || "RETAIL";
 
-    const rule = await convex.query(api.pricing.getPricingRule, { shop: session.shop });
+        const rule = await convex.query(api.pricing.getPricingRule, { shop: session.shop });
 
-    return {
-        rule: rule || {
-            enabled: false,
-            mode: "multiplier",
-            value: 1.0,
-            rounding: "none",
-        },
-        shop: session.shop,
-        role,
-    };
+        return {
+            rule: rule || {
+                enabled: false,
+                mode: "multiplier",
+                value: 1.0,
+                rounding: "none",
+            },
+            shop: session.shop,
+            role,
+        };
+    } catch (error) {
+        console.error("Loader Error in app.settings.jsx:", error);
+        throw new Response("Internal Server Error", { status: 500 });
+    }
 };
 
 export const action = async ({ request }) => {

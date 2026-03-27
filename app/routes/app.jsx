@@ -8,24 +8,33 @@ import { api } from "../../convex/_generated/api.js";
 import convex from "../db.server";
 
 export const loader = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
+  try {
+    const { session } = await authenticate.admin(request);
 
-  const shopSessions = await convex.query(api.sessions.findSessionsByShop, { shop: session.shop });
-  const shopSession = shopSessions[0];
+    const shopSessions = await convex.query(api.sessions.findSessionsByShop, { shop: session.shop });
+    const shopSession = shopSessions[0];
 
-  const mappings = await convex.query(api.productMappings.listMappings, { retailShop: session.shop });
-  const syncedCount = mappings.length;
+    const mappings = await convex.query(api.productMappings.listMappings, { retailShop: session.shop });
+    const syncedCount = mappings.length;
 
-  const inventory = await convex.query(api.inventory.listInventory);
-  const totalCount = inventory.length;
+    const inventory = await convex.query(api.inventory.listInventory);
+    const totalCount = inventory.length;
 
-  return {
-    apiKey: process.env.SHOPIFY_API_KEY || "",
-    role: shopSession?.role,
-    shop: session.shop,
-    syncedCount,
-    totalCount
-  };
+    return {
+      apiKey: process.env.SHOPIFY_API_KEY || "",
+      role: shopSession?.role,
+      shop: session.shop,
+      syncedCount,
+      totalCount
+    };
+  } catch (error) {
+    console.error("Loader Error in app.jsx:", error);
+    // Re-throw Response objects (auth redirects) as-is
+    if (error instanceof Response) {
+      throw error;
+    }
+    throw new Response("Internal Server Error", { status: 500 });
+  }
 };
 
 export default function App() {
