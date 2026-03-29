@@ -234,7 +234,7 @@ export const action = async ({ request }) => {
 };
 
 export default function Index() {
-  const { role, shop, logs, inventory, orderCount, mappings, wholesaleShop, masterPrices, masterStock, retailPrices, pricingEnabled, pricingRule, masterConnectionStatus } = useLoaderData();
+  const { role, shop, logs, inventory, orderCount, mappings, orders = [], totalProcessed = 0, wholesaleShop, masterPrices, masterStock, retailPrices, pricingEnabled, pricingRule, masterConnectionStatus } = useLoaderData();
   const navigate = useNavigate();
   const fetcher = useFetcher();
   const importFetcher = useFetcher();
