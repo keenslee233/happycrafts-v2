@@ -41,7 +41,7 @@ export const loader = async ({ request }) => {
               id
               sku
               price
-            }
+              inventoryQuantity
           }
         }
       }
@@ -78,7 +78,8 @@ export const action = async ({ request }) => {
                 productName: prod.title,
                 description: prod.description || undefined,
                 imageUrl: prod.imageUrl || undefined,
-                stockLevel: existingInv?.stockLevel || 0,
+                stockLevel: prod.inventoryQuantity || 0,
+                quantity: prod.inventoryQuantity || 0,
                 masterCostPrice: parseFloat(prod.price),
                 masterStoreId: session.shop,
                 isListed: existingInv?.isListed || false,
@@ -118,6 +119,7 @@ export default function MasterCatalog() {
                 title: p.title,
                 sku: p.variants.nodes[0]?.sku,
                 price: p.variants.nodes[0]?.price,
+                inventoryQuantity: p.variants.nodes[0]?.inventoryQuantity,
                 description: p.descriptionHtml,
                 imageUrl: p.featuredImage?.url,
             }))

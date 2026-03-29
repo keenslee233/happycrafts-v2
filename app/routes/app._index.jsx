@@ -85,6 +85,7 @@ export const loader = async ({ request }) => {
   // Fetch master prices and stock (single bulk query)
   let masterPrices = {};
   let masterStock = {};
+  let masterConnectionStatus = 'OK';
   
   // OPTIMIZATION: Only do heavy lifting if we have inventory and a partner
   if (wholesaleSession && inventory.length > 0) {
@@ -111,6 +112,15 @@ export const loader = async ({ request }) => {
         }
       `, { variables: { query: skuQuery } });
 
+      if (dataResponse.errors) {
+        if (dataResponse.errors.networkStatusCode === 401 || dataResponse.errors.networkStatusCode === 403) {
+          masterConnectionStatus = 'UNAUTHORIZED';
+        } else {
+          masterConnectionStatus = 'ERROR';
+        }
+        console.error("[Pricing Debug] Master GraphQL returned errors:", dataResponse.errors);
+      }
+
       const variants = dataResponse.data?.productVariants?.nodes || [];
       console.log(`[Pricing Debug] Shopify returned ${variants.length} variant records.`);
 
@@ -127,6 +137,7 @@ export const loader = async ({ request }) => {
       }
     } catch (err) {
       console.error("[Pricing Debug] Failed to fetch master data:", err.message);
+      masterConnectionStatus = 'ERROR';
     }
   }
 
@@ -155,6 +166,7 @@ export const loader = async ({ request }) => {
     retailPrices,
     pricingEnabled: isPricingEnabled,
     pricingRule: pricingRule,
+    masterConnectionStatus
   };
 };
 
@@ -239,7 +251,7 @@ export const action = async ({ request }) => {
 };
 
 export default function Index() {
-  const { role, shop, logs, inventory, orderCount, mappings, wholesaleShop, masterPrices, masterStock, retailPrices, pricingEnabled, pricingRule } = useLoaderData();
+  const { role, shop, logs, inventory, orderCount, mappings, wholesaleShop, masterPrices, masterStock, retailPrices, pricingEnabled, pricingRule, masterConnectionStatus } = useLoaderData();
   const navigate = useNavigate();
   const fetcher = useFetcher();
   const importFetcher = useFetcher();
@@ -504,6 +516,21 @@ export default function Index() {
             </Card>
           )}
 
+          {currentRole === "RETAIL" && masterConnectionStatus === "UNAUTHORIZED" && (
+            <Banner
+              title="Master Store Connection Disconnected"
+              tone="critical"
+            >
+              <p>The Master store ({wholesaleShop}) access token has expired or is invalid. To resume operations, the Master store administrator must open this app in their Shopify admin panel to re-authenticate.</p>
+            </Banner>
+          )}
+
+          {currentRole === "RETAIL" && masterConnectionStatus === "ERROR" && (
+            <Banner title="Master Store Connection Error" tone="warning">
+              <p>Failed to retrieve live prices and stock levels from the Master store. The backend might be experiencing issues.</p>
+            </Banner>
+          )}
+
           {currentRole === "RETAIL" && !pricingEnabled && (
             <Banner
               title="Global Pricing Rules are Currently Disabled"
@@ -610,7 +637,16 @@ export default function Index() {
                             {masterStock[sku.trim()] !== undefined ? masterStock[sku.trim()] : 0} in Shopify
                           </Badge>
                         ) : (
-                          <Badge tone={stockLevel > 0 ? "success" : "critical"}>{stockLevel} available</Badge>
+                          <BlockStack gap="050">
+                            <Badge tone={stockLevel > 0 ? "success" : "critical"}>
+                              {stockLevel} in store
+                            </Badge>
+                            {!mapped && masterStock[sku.trim()] !== undefined && (
+                              <Text variant="bodySm" tone="subdued">
+                                {masterStock[sku.trim()]} available at master
+                              </Text>
+                            )}
+                          </BlockStack>
                         )}
                       </IndexTable.Cell>
                       <IndexTable.Cell>

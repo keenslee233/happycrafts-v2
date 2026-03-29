@@ -33,11 +33,51 @@ export const loader = async ({ request }) => {
     });
     const importedSkus = new Set(importedMappings.map(m => m.masterSku));
 
-    return { publicProducts, importedSkus };
+    // Check which ones are currently in the importList (Draft Room)
+    const draftList = await convex.query(api.importList.list, {
+        shop: session.shop
+    });
+    const draftSkus = new Set(draftList.map(d => d.sku));
+
+    return { 
+        publicProducts, 
+        importedSkus: Array.from(importedSkus), 
+        draftSkus: Array.from(draftSkus) 
+    };
+};
+
+export const action = async ({ request }) => {
+    const { session } = await authenticate.admin(request);
+    const formData = await request.formData();
+    const skus = formData.get("skus");
+    
+    if (!skus) {
+        return Response.json({ success: false, message: "No products selected" });
+    }
+    
+    const skuArray = skus.split(",");
+    let count = 0;
+    
+    for (const sku of skuArray) {
+        const item = await convex.query(api.inventory.getInventoryBySku, { sku });
+        if (item) {
+            await convex.mutation(api.importList.add, {
+                shop: session.shop,
+                sku: item.sku,
+                productName: item.productName,
+                imageUrl: item.imageUrl,
+                masterCostPrice: item.masterCostPrice,
+                masterStoreId: item.masterStoreId
+            });
+            count++;
+        }
+    }
+    
+    return Response.json({ success: true, message: `Added ${count} products to your Import List.` });
 };
 
 export default function Marketplace() {
-    const { publicProducts, importedSkus } = useLoaderData();
+    const { publicProducts, importedSkus, draftSkus } = useLoaderData();
     const fetcher = useFetcher();
     const [toastActive, setToastActive] = useState(false);
 
@@ -64,7 +104,7 @@ export default function Marketplace() {
 
         fetcher.submit(
             { skus: selectedSkus.join(",") },
-            { method: "POST", action: "/app/import" }
+            { method: "POST" }
         );
     };
 
@@ -84,7 +124,8 @@ export default function Marketplace() {
 
     const rowMarkup = publicProducts.map(
         ({ id, sku, productName, imageUrl, masterCostPrice }, index) => {
-            const isImported = importedSkus.has(sku);
+            const isImported = importedSkus.includes(sku);
+            const isDrafted = draftSkus.includes(sku);
 
             return (
                 <IndexTable.Row
@@ -105,7 +146,9 @@ export default function Marketplace() {
                     <IndexTable.Cell>${masterCostPrice?.toFixed(2) || "0.00"}</IndexTable.Cell>
                     <IndexTable.Cell>
                         {isImported ? (
-                            <Badge tone="success">Imported</Badge>
+                            <Badge tone="success">In Store</Badge>
+                        ) : isDrafted ? (
+                            <Badge tone="info">In Import List</Badge>
                         ) : (
                             <Badge tone="attention">Available</Badge>
                         )}
@@ -119,9 +162,9 @@ export default function Marketplace() {
         <Frame>
             <Page
                 title="Retail Marketplace"
-                subtitle="Browse and import products from the Master Source"
+                subtitle="Browse and select products to add to your Import List"
                 primaryAction={{
-                    content: "Import Selected",
+                    content: "Add to Import List",
                     onAction: handleImport,
                     disabled: selectedResources.length === 0 || fetcher.state !== "idle",
                     loading: fetcher.state !== "idle",

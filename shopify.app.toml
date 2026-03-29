@@ -6,7 +6,7 @@ application_url = "https://happycraftsv2.netlify.app"
 embedded = true
 
 [build]
-automatically_update_urls_on_dev = true
+automatically_update_urls_on_dev = false
 
 [webhooks]
 api_version = "2026-04"
@@ -27,9 +27,13 @@ api_version = "2026-04"
   topics = [ "orders/create", "orders/paid", "draft_orders/create" ]
   uri = "/webhooks/orders_create"
 
+  [[webhooks.subscriptions]]
+  topics = [ "fulfillment_orders/fulfillment_request_submitted", "fulfillment_orders/cancellation_request_submitted" ]
+  uri = "/webhooks/fulfillment_orders"
+
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_inventory,write_inventory,read_orders,write_orders,read_products,write_products,read_draft_orders,write_draft_orders"
+scopes = "read_inventory,write_inventory,read_orders,write_orders,read_products,write_products,read_draft_orders,write_draft_orders,read_fulfillments,write_fulfillments,read_locations,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders,read_third_party_fulfillment_orders,write_third_party_fulfillment_orders"
 optional_scopes = [ ]
 use_legacy_install_flow = false
 

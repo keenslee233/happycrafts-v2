@@ -5,11 +5,10 @@ import 'dotenv/config';
 const client = new ConvexHttpClient(process.env.CONVEX_URL);
 
 async function run() {
-  const logs = await client.query(api.syncLogs.listLogs, {});
-  console.log("Recent Sync Logs:");
-  logs.forEach(log => {
-    const date = new Date(log.createdAt).toLocaleString();
-    console.log(`[${date}] SKU: ${log.sku} | Status: ${log.status} | Message: ${log.message}`);
+  const inventory = await client.query(api.inventory.listInventory, {});
+  console.log("Inventory Items:");
+  inventory.forEach(item => {
+    console.log(`SKU: ${item.sku} | Master Store: ${item.masterStoreId} | Name: ${item.productName}`);
   });
 }
 

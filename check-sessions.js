@@ -5,11 +5,10 @@ import 'dotenv/config';
 const client = new ConvexHttpClient(process.env.CONVEX_URL);
 
 async function run() {
-  const logs = await client.query(api.syncLogs.listLogs, {});
-  console.log("Recent Sync Logs:");
-  logs.forEach(log => {
-    const date = new Date(log.createdAt).toLocaleString();
-    console.log(`[${date}] SKU: ${log.sku} | Status: ${log.status} | Message: ${log.message}`);
+  const sessions = await client.query(api.sessions.findSessionsByRole, { role: 'WHOLESALE' });
+  console.log("Wholesale Sessions:");
+  sessions.forEach(s => {
+    console.log(`Shop: ${s.shop} | Session ID: ${s.id} | Scopes: ${s.scope}`);
   });
 }
 

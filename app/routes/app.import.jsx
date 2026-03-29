@@ -2,6 +2,7 @@ import { authenticate } from "../shopify.server";
 import { api } from "../../convex/_generated/api.js";
 import { createAdminApiClient } from "@shopify/admin-api-client";
 import { applyPricingRule } from "../utils/pricing.server.js";
+import { ensureFulfillmentService } from "../utils/fulfillment.server.js";
 import convex from "../db.server";
 
 /**
@@ -41,6 +42,16 @@ export const action = async ({ request }) => {
       apiVersion: "2026-01",
       accessToken: session.accessToken,
     });
+
+    // ── 2a. ENSURE FULFILLMENT SERVICE & GET LOCATION ID ──
+    const { fulfillmentLocationId, primaryLocationId, handle } = await ensureFulfillmentService(shopifyClient);
+    if (!fulfillmentLocationId && !primaryLocationId) {
+      console.warn("Could not retrieve fulfillment or primary location. Inventory tracking might be limited.");
+    }
+
+    const managementHandle = handle || "happycrafts-sync";
+    console.log(`[import] Using fulfillment location: ${fulfillmentLocationId}, management: ${managementHandle}`);
+
 
     // ── 3. LOOP THROUGH EACH SKU ──
     const results = [];
@@ -82,45 +93,73 @@ export const action = async ({ request }) => {
           accessToken: wholesaleSession.accessToken,
         });
 
-        // Fetch product from Master
+        // Fetch variant from Master (more robust than searching products)
         const wsResponse = await wholesaleClient.request(`
-          query getProduct($query: String!) {
-            products(first: 1, query: $query) {
+          query getVariantBySku($query: String!) {
+            productVariants(first: 1, query: $query) {
               nodes {
-                title
-                vendor
-                productType
-                descriptionHtml
-                images(first: 10) {
-                  nodes { url altText }
-                }
-                variants(first: 1) {
-                  nodes { price sku inventoryQuantity }
+                price
+                sku
+                inventoryQuantity
+                product {
+                  title
+                  vendor
+                  productType
+                  descriptionHtml
+                  images(first: 10) {
+                    nodes { url altText }
+                  }
                 }
               }
             }
           }
-        `, { variables: { query: `sku:${sku}` } });
+        `, { variables: { query: `sku:"${sku}"` } });
 
-        const wsProduct = wsResponse.data?.products?.nodes[0];
-        if (!wsProduct) {
-          console.warn(`SKU ${sku}: Not found on Master`);
-          results.push({ sku, success: false, message: "Not found" });
+        if (wsResponse.errors) {
+          const errCode = wsResponse.errors.networkStatusCode;
+          const errMsg = wsResponse.errors.message || "Master API error";
+          console.error(`Master Fetch Error for SKU ${sku}:`, JSON.stringify(wsResponse.errors));
+          let userMessage = `Failed to fetch from Master store (${errCode || errMsg})`;
+          
+          if (errCode === 401 || errCode === 403) {
+            userMessage = "Master store connection expired. Please log into the master store and reopen the app to re-authenticate.";
+          }
+          
+          results.push({ sku, success: false, message: userMessage });
           failCount++;
           continue;
         }
 
-        const variantData = wsProduct.variants.nodes[0];
+        const wsVariant = wsResponse.data?.productVariants?.nodes[0];
+        if (!wsVariant || !wsVariant.product) {
+          console.warn(`SKU ${sku}: Not found on Master catalog.`, JSON.stringify(wsResponse.data));
+          results.push({ sku, success: false, message: "Not found on Master store catalog." });
+          failCount++;
+          continue;
+        }
+
+        const wsProduct = wsVariant.product;
+        const variantData = wsVariant;
         const masterPrice = parseFloat(variantData.price);
         const retailPrice = applyPricingRule(masterPrice, pricingRule);
 
         // ── Create product with SKU, Price, and Tracking in ONE atomic call ──
         const uniqueHandle = `imported-${sku.toLowerCase()}-${Date.now()}`;
 
-        console.log(`Creating product with SKU=${sku}, Price=$${retailPrice}...`);
+        // ── Attach media (productSet accepts files input) ──
+        const filesInput = (wsProduct.images?.nodes || []).map(img => ({
+          originalSource: img.url,
+          alt: img.altText || wsProduct.title,
+          contentType: "IMAGE",
+        }));
+
+        console.log(`Creating product with SKU=${sku}, Price=$${retailPrice} via productSet...`);
+        
+        const initialQty = Math.floor(inventoryItem.quantity ?? inventoryItem.stockLevel ?? 0);
+
         const createResponse = await shopifyClient.request(`
           mutation productSet($input: ProductSetInput!) {
-            productSet(input: $input) {
+            productSet(synchronous: true, input: $input) {
               product {
                 id
                 handle
@@ -133,7 +172,7 @@ export const action = async ({ request }) => {
                   }
                 }
               }
-              userErrors { field message code }
+              userErrors { field message }
             }
           }
         `, {
@@ -144,20 +183,29 @@ export const action = async ({ request }) => {
               vendor: wsProduct.vendor || "Master Store",
               productType: wsProduct.productType || "Imported",
               descriptionHtml: wsProduct.descriptionHtml || "",
-              productOptions: [
-                { name: "Title", position: 1, values: [{ name: "Default Title" }] }
-              ],
+              productOptions: [{
+                name: "Title",
+                values: [{ name: "Default Title" }]
+              }],
+              files: filesInput,
               variants: [
                 {
-                  optionValues: [{ optionName: "Title", name: "Default Title" }],
                   price: String(retailPrice),
-                  inventoryItem: {
-                    sku: String(sku),
-                    tracked: false
-                  }
+                  sku: String(sku),
+                  optionValues: [{ name: "Default Title", optionName: "Title" }],
+                  inventoryPolicy: "DENY",
+                  ...(fulfillmentLocationId ? {
+                    inventoryQuantities: [
+                      {
+                        locationId: fulfillmentLocationId,
+                        name: "available",
+                        quantity: initialQty
+                      }
+                    ]
+                  } : {})
                 }
               ]
-            },
+            }
           }
         });
 
@@ -169,10 +217,8 @@ export const action = async ({ request }) => {
           if (errObj.graphQLErrors) {
             errObj.graphQLErrors.forEach((ge, i) => {
               console.error(`  graphQLError[${i}]: ${ge.message}`);
-              if (ge.extensions) console.error(`    extensions: ${JSON.stringify(ge.extensions)}`);
             });
           }
-          console.error(`  Full error JSON: ${JSON.stringify(errObj, null, 2)}`);
           const errorMsg = errObj.graphQLErrors?.[0]?.message || errObj.message || "API error";
           results.push({ sku, success: false, message: errorMsg });
           failCount++;
@@ -196,36 +242,29 @@ export const action = async ({ request }) => {
 
         const createdVariant = newProduct.variants.nodes[0];
         const defaultVariantId = createdVariant?.id;
-        console.log(`✓ Product created: SKU=${createdVariant?.sku}, Price=$${createdVariant?.price}, Tracked=${createdVariant?.inventoryItem?.tracked}`);
+        const inventoryItemId = createdVariant?.inventoryItem?.id;
 
-        // ── Attach media separately (productSet doesn't accept media directly) ──
-        const mediaInput = (wsProduct.images?.nodes || []).map(img => ({
-          originalSource: img.url,
-          alt: img.altText || wsProduct.title,
-          mediaContentType: "IMAGE",
-        }));
+        console.log(`✓ Product created successfully: ${newProduct.id}. Inventory Item: ${inventoryItemId}`);
 
-        if (mediaInput.length > 0) {
-          try {
-            await shopifyClient.request(`
-              mutation productCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
-                productCreateMedia(productId: $productId, media: $media) {
-                  mediaUserErrors { field message }
-                }
+        // If for some reason tracking wasn't enabled automatically by productSet, ensure it is.
+        if (inventoryItemId && !createdVariant?.inventoryItem?.tracked) {
+          console.log(`  Enabling tracking for ${inventoryItemId} (fallback)...`);
+          await shopifyClient.request(`
+            mutation inventoryItemUpdate($id: ID!, $input: InventoryItemInput!) {
+              inventoryItemUpdate(id: $id, input: $input) {
+                userErrors { field message }
               }
-            `, {
-              variables: {
-                productId: newProduct.id,
-                media: mediaInput
-              }
-            });
-          } catch (mediaErr) {
-            console.warn(`Media attach failed for SKU ${sku}: ${mediaErr.message}`);
-          }
+            }
+          `, {
+            variables: { id: inventoryItemId, input: { tracked: true } }
+          });
         }
 
+        console.log(`✓ SKU ${sku}: Processed successfully.`);
+
+
         // ── SAVE MAPPING IN CONVEX ──
-        await convex.mutation(api.productMappings.createMapping, {
+        await convex.mutation(api.productMappings.upsertMapping, {
           masterSku: sku,
           retailShop: retailShop,
           retailProductId: newProduct.id,
@@ -234,13 +273,22 @@ export const action = async ({ request }) => {
           createdAt: Date.now()
         });
 
+        // ── CLEANUP FROM IMPORT LIST ──
+        await convex.mutation(api.importList.remove, {
+          shop: retailShop,
+          sku: sku
+        });
+
         await convex.mutation(api.inventory.upsertInventory, {
           sku: sku,
           productName: wsProduct.title,
           stockLevel: variantData.inventoryQuantity || 0,
+          quantity: variantData.inventoryQuantity || 0,
           retailProductId: newProduct.id,
           masterStoreId: inventoryItem.masterStoreId,
-          masterCostPrice: inventoryItem.masterCostPrice
+          masterCostPrice: inventoryItem.masterCostPrice,
+          isListed: true,
+          isPublic: true
         });
 
         await convex.mutation(api.syncLogs.createLog, {

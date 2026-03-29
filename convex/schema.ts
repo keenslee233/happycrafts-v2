@@ -29,6 +29,7 @@ export default defineSchema({
     description: v.optional(v.string()),
     imageUrl: v.optional(v.string()),
     stockLevel: v.float64(),
+    quantity: v.optional(v.float64()), // Source of truth sync'd from Master store
     retailProductId: v.optional(v.string()),
     masterStoreId: v.optional(v.string()),
     masterCostPrice: v.optional(v.float64()),
@@ -56,6 +57,16 @@ export default defineSchema({
     createdAt: v.number(), // timestamp
   }).index("by_shop", ["shop"]).index("by_sku", ["sku"]),
 
+  importList: defineTable({
+    shop: v.string(),
+    sku: v.string(),
+    productName: v.string(),
+    imageUrl: v.optional(v.string()),
+    masterCostPrice: v.optional(v.float64()),
+    masterStoreId: v.optional(v.string()),
+    createdAt: v.number(), // timestamp
+  }).index("by_shop", ["shop"]).index("by_shop_sku", ["shop", "sku"]),
+
   productMappings: defineTable({
     masterSku: v.string(),
     retailShop: v.string(),
@@ -72,4 +83,11 @@ export default defineSchema({
     value: v.float64(),
     rounding: v.string(), // "none", ".99", ".95", ".00"
   }).index("by_shop", ["shop"]),
+
+  stores: defineTable({
+    shop: v.string(),
+    locationId: v.string(),
+    updatedAt: v.number(),
+  }).index("by_shop", ["shop"]),
 });
+

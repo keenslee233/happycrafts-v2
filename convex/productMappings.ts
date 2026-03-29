@@ -43,6 +43,8 @@ export const upsertMapping = mutation({
   },
 });
 
+export const createMapping = upsertMapping;
+
 export const deleteMapping = mutation({
   args: { masterSku: v.string(), retailShop: v.string() },
   handler: async (ctx, args) => {
@@ -71,3 +73,12 @@ export const deleteMappingsByShop = mutation({
   },
 });
 
+export const deleteAllMappings = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const all = await ctx.db.query("productMappings").collect();
+    for (const mapping of all) {
+      await ctx.db.delete(mapping._id);
+    }
+  },
+});

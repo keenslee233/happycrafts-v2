@@ -68,6 +68,7 @@ async function fetchCatalog() {
                     sku: variant.sku,
                     productName: product.title,
                     stockLevel: variant.inventoryQuantity || 0,
+                    quantity: variant.inventoryQuantity || 0,
                     isListed: false,
                     isPublic: false,
                 });

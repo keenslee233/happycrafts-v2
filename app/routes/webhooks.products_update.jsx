@@ -33,6 +33,7 @@ export const action = async ({ request }) => {
               sku: variant.sku,
               productName: payload.title,
               stockLevel: variant.inventory_quantity,
+              quantity: variant.inventory_quantity,
               masterStoreId: inv?.masterStoreId,
               masterCostPrice: inv?.masterCostPrice,
               retailProductId: inv?.retailProductId

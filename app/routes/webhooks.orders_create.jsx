@@ -22,7 +22,8 @@ export const action = async ({ request }) => {
     try {
         await forwardOrder({
             shop,
-            order
+            order,
+            db: convex // Passing convex as db
         });
     } catch (error) {
         console.error(`❌ Error in order webhook for ${shop}:`, error.message);

@@ -32,23 +32,32 @@ export const upsertInventory = mutation({
     description: v.optional(v.string()),
     imageUrl: v.optional(v.string()),
     stockLevel: v.float64(),
+    quantity: v.float64(),
     retailProductId: v.optional(v.string()),
     masterStoreId: v.optional(v.string()),
     masterCostPrice: v.optional(v.float64()),
-    isListed: v.boolean(),
-    isPublic: v.boolean(),
+    isListed: v.optional(v.boolean()),
+    isPublic: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
+    const { isListed = false, isPublic = false, ...other } = args;
     const existing = await ctx.db
       .query("inventory")
       .withIndex("by_sku", (q) => q.eq("sku", args.sku))
       .unique();
 
+    const data = { 
+      ...other, 
+      isListed, 
+      isPublic, 
+      quantity: args.quantity
+    };
+
     if (existing) {
-      await ctx.db.patch(existing._id, args);
+      await ctx.db.patch(existing._id, data);
       return existing._id;
     } else {
-      return await ctx.db.insert("inventory", args);
+      return await ctx.db.insert("inventory", data);
     }
   },
 });

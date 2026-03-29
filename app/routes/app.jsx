@@ -6,6 +6,8 @@ import { AppProvider as PolarisAppProvider, Text, Button, Badge } from "@shopify
 import translations from "@shopify/polaris/locales/en.json";
 import { api } from "../../convex/_generated/api.js";
 import convex from "../db.server";
+import { ensureFulfillmentService } from "../utils/fulfillment.server.js";
+import { createAdminApiClient } from "@shopify/admin-api-client";
 
 export const loader = async ({ request }) => {
   try {
@@ -13,6 +15,14 @@ export const loader = async ({ request }) => {
 
     const shopSessions = await convex.query(api.sessions.findSessionsByShop, { shop: session.shop });
     const shopSession = shopSessions[0];
+
+    // Ensure Fulfillment Service is registered
+    const shopifyClient = createAdminApiClient({
+      storeDomain: session.shop,
+      apiVersion: "2026-01",
+      accessToken: session.accessToken,
+    });
+    await ensureFulfillmentService(shopifyClient);
 
     const mappings = await convex.query(api.productMappings.listMappings, { retailShop: session.shop });
     const syncedCount = mappings.length;
@@ -134,6 +144,9 @@ export default function App() {
               </NavLink>
               <NavLink to="/app/marketplace" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`}>
                 <Text variant="bodyMd">🛍 Marketplace</Text>
+              </NavLink>
+              <NavLink to="/app/import-list" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`}>
+                <Text variant="bodyMd">📥 Imported Products</Text>
               </NavLink>
               {role === "WHOLESALE" && (
                 <NavLink to="/app/master-catalog" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`}>

@@ -47,10 +47,11 @@ export async function forwardOrder({ shop, order }) {
         console.log(`  ✅ [DEBUG] SKU Match Found: ${item.sku} ("${inventoryItem.productName}")`);
 
         // Deduct stock locally
-        const newStock = Math.max(0, inventoryItem.stockLevel - item.quantity);
+        const newStock = Math.max(0, (inventoryItem.quantity ?? inventoryItem.stockLevel ?? 0) - item.quantity);
         await convex.mutation(api.inventory.upsertInventory, {
             ...inventoryItem,
-            stockLevel: newStock
+            stockLevel: newStock,
+            quantity: newStock
         });
 
         matchedItems.push({

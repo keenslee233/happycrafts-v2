@@ -53,3 +53,12 @@ export const createOrder = mutation({
     return await ctx.db.insert("pushedOrders", args);
   },
 });
+export const deleteAllOrders = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const all = await ctx.db.query("pushedOrders").collect();
+    for (const order of all) {
+      await ctx.db.delete(order._id);
+    }
+  },
+});

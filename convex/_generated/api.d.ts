@@ -8,11 +8,14 @@
  * @module
  */
 
+import type * as importList from "../importList.js";
 import type * as inventory from "../inventory.js";
+import type * as migrations from "../migrations.js";
 import type * as orders from "../orders.js";
 import type * as pricing from "../pricing.js";
 import type * as productMappings from "../productMappings.js";
 import type * as sessions from "../sessions.js";
+import type * as stores from "../stores.js";
 import type * as syncLogs from "../syncLogs.js";
 
 import type {
@@ -22,11 +25,14 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  importList: typeof importList;
   inventory: typeof inventory;
+  migrations: typeof migrations;
   orders: typeof orders;
   pricing: typeof pricing;
   productMappings: typeof productMappings;
   sessions: typeof sessions;
+  stores: typeof stores;
   syncLogs: typeof syncLogs;
 }>;
 

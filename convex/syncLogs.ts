@@ -55,3 +55,12 @@ export const deleteLogsByShop = mutation({
   },
 });
 
+export const deleteAllLogs = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const all = await ctx.db.query("syncLogs").collect();
+    for (const log of all) {
+      await ctx.db.delete(log._id);
+    }
+  },
+});

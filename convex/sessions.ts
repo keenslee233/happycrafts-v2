@@ -114,3 +114,9 @@ export const findSessionsByRole = query({
       .collect();
   },
 });
+export const findAllSessions = query({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.db.query("sessions").collect();
+  },
+});

@@ -4,8 +4,8 @@ import {
   AppDistribution,
   shopifyApp,
 } from "@shopify/shopify-app-react-router/server";
-import { ConvexSessionStorage } from "./convex-session-storage";
-import { convex } from "./db.server";
+import { ConvexSessionStorage } from "./convex-session-storage.js";
+import { convex } from "./db.server.js";
 
 const isProd = process.env.NODE_ENV === "production";
 
