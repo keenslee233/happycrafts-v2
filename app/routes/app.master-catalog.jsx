@@ -20,11 +20,10 @@ import convex from "../db.server";
 import { useState, useEffect } from "react";
 
 export const loader = async ({ request }) => {
-    try {
-        const { admin, session } = await authenticate.admin(request);
+    const { admin, session } = await authenticate.admin(request);
 
-        // Fetch products from Shopify Admin
-        const response = await admin.graphql(`
+    // Fetch products from Shopify Admin
+    const response = await admin.graphql(`
         query getProducts {
           products(first: 50) {
             nodes {
@@ -46,23 +45,17 @@ export const loader = async ({ request }) => {
         }
       `);
 
-        const resData = await response.json();
-        const shopifyProducts = resData.data?.products?.nodes || [];
+    const resData = await response.json();
+    const shopifyProducts = resData.data?.products?.nodes || [];
 
-        // Fetch public SKUs from Convex
-        const publicInventory = await convex.query(api.inventory.listPublicInventory);
-        const publicSkus = new Set(publicInventory.map(i => i.sku));
+    // Fetch public SKUs from Convex — return as Array since Set doesn't serialize over JSON
+    const publicInventory = await convex.query(api.inventory.listPublicInventory);
+    const publicSkus = publicInventory.map(i => i.sku);
 
-        const shopName = session.shop.replace(".myshopify.com", "");
-        const shopifyAdminUrl = `https://admin.shopify.com/store/${shopName}/products`;
+    const shopName = session.shop.replace(".myshopify.com", "");
+    const shopifyAdminUrl = `https://admin.shopify.com/store/${shopName}/products`;
 
-        return { shopifyProducts, publicSkus, shopifyAdminUrl };
-    } catch (error) {
-        console.error("Master Catalog Auth Error:", error);
-        // If auth fails in an iframe, Shopify Remix will handle the redirect, 
-        // but we ensure we don't crash here.
-        throw error;
-    }
+    return { shopifyProducts, publicSkus, shopifyAdminUrl };
 };
 
 export const action = async ({ request }) => {
@@ -101,7 +94,7 @@ export const action = async ({ request }) => {
 };
 
 export default function MasterCatalog() {
-    const { shopifyProducts = [], publicSkus = new Set(), shopifyAdminUrl } = useLoaderData();
+    const { shopifyProducts = [], publicSkus = [], shopifyAdminUrl } = useLoaderData();
     const fetcher = useFetcher();
     const [toastActive, setToastActive] = useState(false);
 
@@ -142,7 +135,7 @@ export default function MasterCatalog() {
         ({ id, title, featuredImage, variants }, index) => {
             const sku = variants.nodes[0]?.sku || "No SKU";
             const price = variants.nodes[0]?.price || "0.00";
-            const isPublic = publicSkus.has(sku);
+            const isPublic = publicSkus.includes(sku);
 
             return (
                 <IndexTable.Row

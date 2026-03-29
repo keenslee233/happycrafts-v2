@@ -14,4 +14,5 @@
   for = "/*"
   [headers.values]
     X-Frame-Options = "ALLOWALL"
-    Content-Security-Policy = "frame-ancestors *; report-uri /csp-report"
+    Content-Security-Policy = "frame-ancestors https://*.myshopify.com https://admin.shopify.com https://partners.shopify.com; connect-src 'self' https://*.convex.cloud wss://*.convex.cloud https://cdn.shopify.com https://*.myshopify.com;"
+

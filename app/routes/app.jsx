@@ -1,8 +1,9 @@
-import { Outlet, useLoaderData, useRouteError, NavLink } from "react-router";
+import { Outlet, useLoaderData, useRouteError, NavLink, useNavigate } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { authenticate } from "../shopify.server";
 import { AppProvider as PolarisAppProvider, Text, Button, Badge } from "@shopify/polaris";
+import { NavMenu } from "@shopify/app-bridge-react";
 import translations from "@shopify/polaris/locales/en.json";
 import { api } from "../../convex/_generated/api.js";
 import convex from "../db.server";
@@ -54,6 +55,14 @@ export default function App() {
   return (
     <AppProvider embedded apiKey={apiKey}>
       <PolarisAppProvider i18n={translations}>
+        <NavMenu>
+          <a href="/app" rel="home">Dashboard</a>
+          {role === "RETAIL" && <a href="/app/marketplace">Marketplace</a>}
+          {role === "RETAIL" && <a href="/app/import-list">Imported Products</a>}
+          {role === "WHOLESALE" && <a href="/app/master-catalog">Master Catalog</a>}
+          <a href="/app/products">Products</a>
+          <a href="/app/settings">Settings</a>
+        </NavMenu>
         <div style={{ display: 'flex', height: '100vh', background: '#f4f6f8', fontFamily: 'Inter, system-ui, sans-serif' }}>
           <style>{`
             .sidebar-item {

@@ -6,7 +6,7 @@ export const action = async ({ request }) => {
 
     console.log(`🔔 Received ${topic} from ${shop}`);
 
-    const validTopics = ["ORDERS_CREATE", "orders/create", "ORDERS_PAID", "orders/paid", "DRAFT_ORDERS_CREATE", "draft_orders/create"];
+    const validTopics = ["ORDERS_CREATE", "orders/create", "ORDERS_PAID", "orders/paid"];
     if (!validTopics.includes(topic)) {
         return new Response();
     }
@@ -14,20 +14,16 @@ export const action = async ({ request }) => {
     const order = payload;
     const sourceName = order.source_name || "unknown";
 
-    // Requirements: Listen for both CREATE and PAID. 
-    // We already have duplicate check in forwardOrder utility.
     console.log(`🔍 [DEBUG] Webhook Logic Initiated for ${order.name} (Source: ${sourceName})`);
 
     // Use the shared utility for forwarding
     try {
-        await forwardOrder({
-            shop,
-            order,
-            db: convex // Passing convex as db
-        });
+        const result = await forwardOrder({ shop, order });
+        console.log(`📋 Forward result for ${order.name}: ${result.success ? '✅' : '⚠️'} ${result.message || result.draftOrderName || ''}`);
     } catch (error) {
         console.error(`❌ Error in order webhook for ${shop}:`, error.message);
     }
 
     return new Response();
 };
+

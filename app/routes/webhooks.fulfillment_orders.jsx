@@ -22,7 +22,7 @@ export const action = async ({ request }) => {
 
     // Fetch the full order to get details for forwarding
     try {
-        const response = await admin.graphql(`
+        const gqlResponse = await admin.graphql(`
             query getOrder($id: ID!) {
               order(id: $id) {
                 id name email sourceName
@@ -38,9 +38,12 @@ export const action = async ({ request }) => {
             }
         `, { variables: { id: `gid://shopify/Order/${orderId}` } });
 
+        const response = await gqlResponse.json();
+        console.log(`📋 Order fetch response:`, JSON.stringify(response.data?.order?.name || 'NO ORDER', null, 2));
+
         const orderRaw = response.data?.order;
         if (!orderRaw) {
-            console.error(`❌ Could not fetch order gid://shopify/Order/${orderId} for fulfillment request.`);
+            console.error(`❌ Could not fetch order gid://shopify/Order/${orderId}. Response:`, JSON.stringify(response));
             return new Response();
         }
 
@@ -73,7 +76,7 @@ export const action = async ({ request }) => {
             console.log(`✅ Order ${order.name} forwarded to Master. Accepting fulfillment request in Shopify...`);
             
             // Accept the request in Shopify to signal processing started
-            const mutationResponse = await admin.graphql(`
+            const acceptGqlResponse = await admin.graphql(`
                 mutation fulfillmentOrderAcceptFulfillmentRequest($id: ID!, $message: String) {
                   fulfillmentOrderAcceptFulfillmentRequest(id: $id, message: $message) {
                     fulfillmentOrder { id status }
@@ -87,6 +90,7 @@ export const action = async ({ request }) => {
                 } 
             });
 
+            const mutationResponse = await acceptGqlResponse.json();
             const userErrors = mutationResponse.data?.fulfillmentOrderAcceptFulfillmentRequest?.userErrors;
             if (userErrors?.length > 0) {
                 console.warn(`⚠️ Warning: Could not 'Accept' fulfillment request for ${fulfillmentOrder.admin_graphql_api_id}: ${userErrors[0].message}`);
