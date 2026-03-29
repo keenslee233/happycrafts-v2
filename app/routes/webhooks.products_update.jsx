@@ -27,8 +27,15 @@ export const action = async ({ request }) => {
       if (payload.variants) {
         for (const variant of payload.variants) {
           if (variant.sku) {
-            // 1. Update Local Inventory
+            // 1. Check if update is redundant (already synced)
             const inv = await convex.query(api.inventory.getInventoryBySku, { sku: variant.sku });
+            
+            if (inv && inv.stockLevel === variant.inventory_quantity) {
+              console.log(`ℹ️ SKU ${variant.sku} already at stock level ${variant.inventory_quantity}. Skipping redundant update.`);
+              continue;
+            }
+
+            // 2. Update Local Inventory
             await convex.mutation(api.inventory.upsertInventory, {
               sku: variant.sku,
               productName: payload.title,
@@ -36,8 +43,11 @@ export const action = async ({ request }) => {
               quantity: variant.inventory_quantity,
               masterStoreId: inv?.masterStoreId,
               masterCostPrice: inv?.masterCostPrice,
-              retailProductId: inv?.retailProductId
+              retailProductId: inv?.retailProductId,
+              isListed: inv?.isListed ?? true,
+              isPublic: inv?.isPublic ?? true
             });
+
 
             // Log Local Sync
             try {

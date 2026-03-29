@@ -269,14 +269,28 @@ export default function Index() {
   // Track which SKUs were just imported (for instant UI feedback)
   const [justImported, setJustImported] = useState({});
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (fetcher.state === "idle") {
-        fetcher.load("/");
-      }
-    }, 10000);
-    return () => clearInterval(interval);
-  }, [fetcher]);
+  // 1. Fetch Real-time Data from Convex
+  const convexInventory = useQuery(api.inventory.listInventory, {});
+  const convexLogs = useQuery(api.syncLogs.listLogs, { shop: shop });
+
+  // 2. Map and Combine Data (using loader data as fallback/initial state)
+  const displayInventory = useMemo(() => {
+    if (convexInventory) {
+      return convexInventory.map(item => ({ ...item, id: item._id }));
+    }
+    return inventory;
+  }, [convexInventory, inventory]);
+
+  const displayLogs = useMemo(() => {
+    if (convexLogs) {
+      return convexLogs.map(log => ({
+        ...log,
+        id: log._id,
+        createdAt: new Date(log.createdAt).toISOString().substring(11, 19),
+      }));
+    }
+    return logs;
+  }, [convexLogs, logs]);
 
   // Handle import response (single or bulk)
   useEffect(() => {
@@ -320,9 +334,9 @@ export default function Index() {
     }
   }, [importFetcher.state, importFetcher.data]);
 
-  const displayLogs = fetcher.data?.logs || logs;
   const displayOrderCount = fetcher.data?.orderCount !== undefined ? fetcher.data.orderCount : orderCount;
   const currentRole = fetcher.data?.role !== undefined ? fetcher.data.role : role;
+
 
   const handleManualSync = (sku, stockLevel) => {
     fetcher.submit({ actionType: "sync", sku, stockLevel }, { method: "POST" });
@@ -555,7 +569,7 @@ export default function Index() {
 
               <IndexTable
                 resourceName={{ singular: 'product', plural: 'products' }}
-                itemCount={inventory.length}
+                itemCount={displayInventory.length}
                 selectedItemsCount={
                   allResourcesSelected ? 'All' : selectedResources.length
                 }
@@ -579,7 +593,8 @@ export default function Index() {
                   ] : []
                 }
               >
-                {inventory.map(({ id, sku, productName, stockLevel, masterCostPrice }, index) => {
+                {displayInventory.map(({ id, sku, productName, stockLevel, masterCostPrice }, index) => {
+
                   const mapped = isMapped(sku);
                   const isImporting = importFetcher.state !== "idle" && importFetcher.formData?.get("sku") === sku;
                   const viewUrl = mapped ? getViewInStoreUrl(sku) : null;

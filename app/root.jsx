@@ -1,7 +1,10 @@
 import { Links, Meta, Outlet, Scripts, ScrollRestoration } from "react-router";
+import { ConvexProvider, ConvexReactClient } from "convex/react";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
+
+const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL);
 
 export default function App() {
   return (
@@ -18,10 +21,13 @@ export default function App() {
         <Links />
       </head>
       <body>
-        <Outlet />
+        <ConvexProvider client={convex}>
+          <Outlet />
+        </ConvexProvider>
         <ScrollRestoration />
         <Scripts />
       </body>
     </html>
   );
 }
+

@@ -128,11 +128,33 @@ export async function updateRetailInventory(shop, accessToken, sku, quantity) {
 
     if (updateErrors) {
       console.error(`❌ Retail GraphQL Error (Update) for ${shopName}:`, updateErrors);
-    } else if (updateData?.inventorySetQuantities?.userErrors?.length > 0) {
-      console.error(`❌ Retail Update User Errors for ${shopName}:`, updateData.inventorySetQuantities.userErrors);
     } else {
       console.log(`✅ Retail Sync Success for ${shopName} - SKU: ${sku} -> Quantity: ${quantity}`);
+      
+      // Update Convex immediately to prevent reflected webhook processing
+      try {
+        const inv = await convex.query(api.inventory.getInventoryBySku, { sku });
+        if (inv) {
+          await convex.mutation(api.inventory.upsertInventory, {
+            sku: inv.sku,
+            productName: inv.productName,
+            description: inv.description,
+            imageUrl: inv.imageUrl,
+            stockLevel: quantity, // Using the new quantity from Shopify
+            retailProductId: inv.retailProductId,
+            masterStoreId: inv.masterStoreId,
+            masterCostPrice: inv.masterCostPrice,
+            isListed: inv.isListed ?? true,
+            isPublic: inv.isPublic ?? true
+          });
+          console.log(`✅ Convex local state updated for SKU: ${sku}`);
+        }
+
+      } catch (convexError) {
+        console.error(`⚠️ Failed to update Convex after sync for ${sku}:`, convexError.message);
+      }
     }
+
 
   } catch (error) {
     console.error(`❌ Network/Client error syncing to Retail ${shopName}:`, error);
