@@ -139,7 +139,7 @@ export default function App() {
             </div>
 
             <nav>
-              <NavLink to="/app/dashboard" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`}>
+              <NavLink to="/app" end className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`}>
                 <Text variant="bodyMd">▦ Dashboard</Text>
               </NavLink>
               {role === "RETAIL" && (
@@ -157,9 +157,6 @@ export default function App() {
                   <Text variant="bodyMd">📦 Master Catalog</Text>
                 </NavLink>
               )}
-              <NavLink to="/app" end className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`}>
-                <Text variant="bodyMd">🌐 Stores</Text>
-              </NavLink>
               <NavLink to="/app/products" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`}>
                 <Text variant="bodyMd">≡ Products</Text>
               </NavLink>

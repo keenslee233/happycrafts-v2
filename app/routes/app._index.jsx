@@ -1,5 +1,6 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useFetcher, useLoaderData, useNavigate, redirect } from "react-router";
+import { useQuery } from "convex/react";
 import {
   Page,
   Layout,
@@ -26,18 +27,12 @@ import convex from "../db.server";
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   
-  // 1. Fetch the session first to know the role
+  // Fetch store role from Convex sessions
   const shopSessions = await convex.query(api.sessions.findSessionsByShop, { shop: session.shop });
-  const shopSession = shopSessions[0];
-  const currentRole = shopSession?.role;
+  const role = shopSessions[0]?.role;
 
-  // Whenever the app is opened, if it's already configured, jump to Dashboard
-  if (currentRole) {
-    return redirect("/app/dashboard");
-  }
-
-  // 2. If no role, return early with minimal data
-  if (!currentRole) {
+  // 2. If no role, return early for onboarding
+  if (!role) {
     return {
       role: null,
       shop: session.shop,
@@ -68,10 +63,13 @@ export const loader = async ({ request }) => {
     convex.query(api.productMappings.listMappings, { retailShop: session.shop }),
     convex.query(api.sessions.findSessionsByRole, { role: 'WHOLESALE' }),
     convex.query(api.pricing.getPricingRule, { shop: session.shop }),
-    currentRole === "WHOLESALE" 
+    role === "WHOLESALE" 
       ? convex.query(api.orders.listOrdersByMaster, { masterStoreId: session.shop })
       : convex.query(api.orders.listOrders, { shop: session.shop })
   ]);
+
+  const orders = pushedOrders.slice(0, 10);
+  const totalProcessed = pushedOrders.length;
   
   const logs = logsRaw.map(log => ({
     ...log,
@@ -84,7 +82,7 @@ export const loader = async ({ request }) => {
   const mappings = mappingsRaw.map(m => ({ ...m, id: m._id }));
 
   const wholesaleSession = wholesaleSessions.find(s => 
-    currentRole === 'WHOLESALE' ? s.shop === session.shop : true
+    role === 'WHOLESALE' ? s.shop === session.shop : true
   );
 
   // Fetch master prices and stock (single bulk query)
@@ -92,17 +90,14 @@ export const loader = async ({ request }) => {
   let masterStock = {};
   let masterConnectionStatus = 'OK';
   
-  // OPTIMIZATION: Only do heavy lifting if we have inventory and a partner
   if (wholesaleSession && inventory.length > 0) {
     try {
-      console.log(`[Pricing Debug] Fetching master data for ${inventory.length} SKUs...`);
       const wholesaleClient = createAdminApiClient({
         storeDomain: wholesaleSession.shop,
         apiVersion: "2026-01",
         accessToken: wholesaleSession.accessToken,
       });
 
-      // Build OR query for all SKUs
       const skuQuery = inventory.map(i => `sku:"${i.sku}"`).join(' OR ');
 
       const dataResponse = await wholesaleClient.request(`
@@ -117,60 +112,43 @@ export const loader = async ({ request }) => {
         }
       `, { variables: { query: skuQuery } });
 
-      if (dataResponse.errors) {
-        if (dataResponse.errors.networkStatusCode === 401 || dataResponse.errors.networkStatusCode === 403) {
-          masterConnectionStatus = 'UNAUTHORIZED';
-        } else {
-          masterConnectionStatus = 'ERROR';
-        }
-        console.error("[Pricing Debug] Master GraphQL returned errors:", dataResponse.errors);
-      }
-
       const variants = dataResponse.data?.productVariants?.nodes || [];
-      console.log(`[Pricing Debug] Shopify returned ${variants.length} variant records.`);
-
       for (const v of variants) {
         if (v.sku) {
           const trimmedSku = v.sku.trim();
-          if (v.price && !masterPrices[trimmedSku]) {
-            masterPrices[trimmedSku] = parseFloat(v.price);
-          }
-          if (v.inventoryQuantity !== undefined) {
-            masterStock[trimmedSku] = (masterStock[trimmedSku] || 0) + v.inventoryQuantity;
-          }
+          if (v.price && !masterPrices[trimmedSku]) masterPrices[trimmedSku] = parseFloat(v.price);
+          if (v.inventoryQuantity !== undefined) masterStock[trimmedSku] = (masterStock[trimmedSku] || 0) + v.inventoryQuantity;
         }
       }
     } catch (err) {
-      console.error("[Pricing Debug] Failed to fetch master data:", err.message);
+      console.error("[Pricing Debug] Master data fetch failed:", err.message);
       masterConnectionStatus = 'ERROR';
     }
   }
 
-  // Pre-calculate retail prices
-  let retailPrices = {};
   const isPricingEnabled = !!pricingRule?.enabled;
-  console.log(`[Pricing Debug] Pricing Rule Enabled: ${isPricingEnabled}`);
-
+  let retailPrices = {};
   if (isPricingEnabled) {
     for (const [sku, price] of Object.entries(masterPrices)) {
       retailPrices[sku] = applyPricingRule(price, pricingRule);
     }
-    console.log(`[Pricing Debug] Calculated retail prices for ${Object.keys(retailPrices).length} SKUs.`);
   }
 
   return {
-    role: shopSession?.role,
+    role,
     shop: session.shop,
     logs,
     inventory,
     orderCount,
     mappings,
+    orders,
+    totalProcessed,
     wholesaleShop: wholesaleSession?.shop,
     masterPrices,
     masterStock,
     retailPrices,
     pricingEnabled: isPricingEnabled,
-    pricingRule: pricingRule,
+    pricingRule,
     masterConnectionStatus
   };
 };
@@ -519,8 +497,59 @@ export default function Index() {
           `}</style>
 
           <div>
-            <Text variant="headingMd" as="h2">Connect and manage your stores</Text>
-            <Text tone="subdued">Import and sync inventory from your master wholesale shop.</Text>
+            <Text variant="headingXl" as="h1">Dashboard</Text>
+            <Text tone="subdued">Overview of your synced inventory and recent orders.</Text>
+          </div>
+
+          {/* DASHBOARD ORDERS SECTION */}
+          {(currentRole === "RETAIL" || currentRole === "WHOLESALE") && (
+            <Card>
+              <Box padding="400">
+                <BlockStack gap="400">
+                  <Text variant="headingMd" as="h3">
+                    {currentRole === "WHOLESALE" ? "Recent Wholesale Orders" : "Recent Direct Orders"}
+                  </Text>
+                  <IndexTable
+                    resourceName={{ singular: 'order', plural: 'orders' }}
+                    itemCount={orders.length}
+                    headings={[
+                      { title: "Order ID" },
+                      { title: currentRole === "WHOLESALE" ? "Retailer" : "Destination" },
+                      { title: "Customer" },
+                      { title: "Items" },
+                      { title: "Amount" },
+                      { title: "Status" },
+                      { title: "Date" },
+                    ]}
+                    selectable={false}
+                  >
+                    {orders.map((order, index) => (
+                      <IndexTable.Row id={order._id} key={order._id} position={index}>
+                        <IndexTable.Cell><Text fontWeight="bold">#{order.retailOrderId.slice(-4)}</Text></IndexTable.Cell>
+                        <IndexTable.Cell>{currentRole === "WHOLESALE" ? order.shop : "Master Store"}</IndexTable.Cell>
+                        <IndexTable.Cell>{order.customerEmail || "N/A"}</IndexTable.Cell>
+                        <IndexTable.Cell>{order.totalItems} items</IndexTable.Cell>
+                        <IndexTable.Cell>${order.totalAmount?.toFixed(2)}</IndexTable.Cell>
+                        <IndexTable.Cell><Badge tone="success">Processed</Badge></IndexTable.Cell>
+                        <IndexTable.Cell>{new Date(order.createdAt).toLocaleDateString()}</IndexTable.Cell>
+                      </IndexTable.Row>
+                    ))}
+                  </IndexTable>
+                  {orders.length === 0 && (
+                    <Box padding="400" align="center">
+                      <Text tone="subdued">No orders found.</Text>
+                    </Box>
+                  )}
+                </BlockStack>
+              </Box>
+            </Card>
+          )}
+
+          <Divider />
+
+          <div>
+            <Text variant="headingMd" as="h2">Inventory Sync Status</Text>
+            <Text tone="subdued">Monitor live stock levels and pricing rules across connected stores.</Text>
           </div>
 
           {currentRole === "WHOLESALE" && (
