@@ -23,6 +23,9 @@ async function hardReset() {
         
         await client.mutation(api.syncLogs.deleteAllLogs, {});
         console.log("✅ Wiped 'syncLogs' collection");
+
+        await client.mutation(api.importList.deleteAllImportList, {});
+        console.log("✅ Wiped 'importList' collection");
     } catch (e) {
         console.error("❌ Error wiping Convex:", e.message);
     }

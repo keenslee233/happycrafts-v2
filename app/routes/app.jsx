@@ -142,12 +142,16 @@ export default function App() {
               <NavLink to="/app/dashboard" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`}>
                 <Text variant="bodyMd">▦ Dashboard</Text>
               </NavLink>
-              <NavLink to="/app/marketplace" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`}>
-                <Text variant="bodyMd">🛍 Marketplace</Text>
-              </NavLink>
-              <NavLink to="/app/import-list" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`}>
-                <Text variant="bodyMd">📥 Imported Products</Text>
-              </NavLink>
+              {role === "RETAIL" && (
+                <NavLink to="/app/marketplace" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`}>
+                  <Text variant="bodyMd">🛍 Marketplace</Text>
+                </NavLink>
+              )}
+              {role === "RETAIL" && (
+                <NavLink to="/app/import-list" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`}>
+                  <Text variant="bodyMd">📥 Imported Products</Text>
+                </NavLink>
+              )}
               {role === "WHOLESALE" && (
                 <NavLink to="/app/master-catalog" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`}>
                   <Text variant="bodyMd">📦 Master Catalog</Text>

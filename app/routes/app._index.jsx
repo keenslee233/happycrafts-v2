@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { useFetcher, useLoaderData, useNavigate } from "react-router";
+import { useFetcher, useLoaderData, useNavigate, redirect } from "react-router";
 import {
   Page,
   Layout,
@@ -30,6 +30,11 @@ export const loader = async ({ request }) => {
   const shopSessions = await convex.query(api.sessions.findSessionsByShop, { shop: session.shop });
   const shopSession = shopSessions[0];
   const currentRole = shopSession?.role;
+
+  // Whenever the app is opened, if it's already configured, jump to Dashboard
+  if (currentRole) {
+    return redirect("/app/dashboard");
+  }
 
   // 2. If no role, return early with minimal data
   if (!currentRole) {

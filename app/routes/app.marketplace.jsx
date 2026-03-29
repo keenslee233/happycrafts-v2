@@ -39,10 +39,15 @@ export const loader = async ({ request }) => {
     });
     const draftSkus = new Set(draftList.map(d => d.sku));
 
+    // Fetch role for UI conditioning
+    const shopSessions = await convex.query(api.sessions.findSessionsByShop, { shop: session.shop });
+    const role = shopSessions[0]?.role || "RETAIL";
+
     return { 
         publicProducts, 
         importedSkus: Array.from(importedSkus), 
-        draftSkus: Array.from(draftSkus) 
+        draftSkus: Array.from(draftSkus),
+        role
     };
 };
 
@@ -77,7 +82,7 @@ export const action = async ({ request }) => {
 };
 
 export default function Marketplace() {
-    const { publicProducts, importedSkus, draftSkus } = useLoaderData();
+    const { publicProducts, importedSkus, draftSkus, role } = useLoaderData();
     const fetcher = useFetcher();
     const [toastActive, setToastActive] = useState(false);
 
@@ -147,7 +152,7 @@ export default function Marketplace() {
                     <IndexTable.Cell>
                         {isImported ? (
                             <Badge tone="success">In Store</Badge>
-                        ) : isDrafted ? (
+                        ) : (isDrafted && role === "RETAIL") ? (
                             <Badge tone="info">In Import List</Badge>
                         ) : (
                             <Badge tone="attention">Available</Badge>
@@ -163,12 +168,12 @@ export default function Marketplace() {
             <Page
                 title="Retail Marketplace"
                 subtitle="Browse and select products to add to your Import List"
-                primaryAction={{
+                primaryAction={role === "RETAIL" ? {
                     content: "Add to Import List",
                     onAction: handleImport,
                     disabled: selectedResources.length === 0 || fetcher.state !== "idle",
                     loading: fetcher.state !== "idle",
-                }}
+                } : undefined}
             >
                 <Layout>
                     <Layout.Section>

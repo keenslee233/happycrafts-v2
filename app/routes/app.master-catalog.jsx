@@ -42,6 +42,7 @@ export const loader = async ({ request }) => {
               sku
               price
               inventoryQuantity
+            }
           }
         }
       }
