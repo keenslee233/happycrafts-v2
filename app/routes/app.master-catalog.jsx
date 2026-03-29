@@ -20,43 +20,49 @@ import convex from "../db.server";
 import { useState, useEffect } from "react";
 
 export const loader = async ({ request }) => {
-    const { admin, session } = await authenticate.admin(request);
+    try {
+        const { admin, session } = await authenticate.admin(request);
 
-    // 1. Verify Role (Master store should have WHOLESALE role)
-    const shopSessions = await convex.query(api.sessions.findSessionsByShop, { shop: session.shop });
-    // Check role if needed
-    
-    // 2. Fetch products from Shopify Admin
-    const response = await admin.graphql(`
-    query getProducts {
-      products(first: 50) {
-        nodes {
-          id
-          title
-          handle
-          descriptionHtml
-          featuredImage { url }
-          variants(first: 1) {
+        // Fetch products from Shopify Admin
+        const response = await admin.graphql(`
+        query getProducts {
+          products(first: 50) {
             nodes {
               id
-              sku
-              price
-              inventoryQuantity
+              title
+              handle
+              descriptionHtml
+              featuredImage { url }
+              variants(first: 1) {
+                nodes {
+                  id
+                  sku
+                  price
+                  inventoryQuantity
+                }
+              }
             }
           }
         }
-      }
+      `);
+
+        const resData = await response.json();
+        const shopifyProducts = resData.data?.products?.nodes || [];
+
+        // Fetch public SKUs from Convex
+        const publicInventory = await convex.query(api.inventory.listPublicInventory);
+        const publicSkus = new Set(publicInventory.map(i => i.sku));
+
+        const shopName = session.shop.replace(".myshopify.com", "");
+        const shopifyAdminUrl = `https://admin.shopify.com/store/${shopName}/products`;
+
+        return { shopifyProducts, publicSkus, shopifyAdminUrl };
+    } catch (error) {
+        console.error("Master Catalog Auth Error:", error);
+        // If auth fails in an iframe, Shopify Remix will handle the redirect, 
+        // but we ensure we don't crash here.
+        throw error;
     }
-  `);
-
-    const resData = await response.json();
-    const shopifyProducts = resData.data.products.nodes;
-
-    // 3. Fetch public SKUs from Convex
-    const publicInventory = await convex.query(api.inventory.listPublicInventory);
-    const publicSkus = new Set(publicInventory.map(i => i.sku));
-
-    return { shopifyProducts, publicSkus };
 };
 
 export const action = async ({ request }) => {
@@ -95,7 +101,7 @@ export const action = async ({ request }) => {
 };
 
 export default function MasterCatalog() {
-    const { shopifyProducts, publicSkus } = useLoaderData();
+    const { shopifyProducts = [], publicSkus = new Set(), shopifyAdminUrl } = useLoaderData();
     const fetcher = useFetcher();
     const [toastActive, setToastActive] = useState(false);
 
@@ -178,6 +184,14 @@ export default function MasterCatalog() {
                     onAction: handleMarkPublic,
                     disabled: selectedResources.length === 0 || fetcher.state !== "idle",
                 }}
+                secondaryActions={[
+                    {
+                        content: "Manage Products in Shopify",
+                        url: shopifyAdminUrl,
+                        external: true,
+                        icon: () => <span>↗</span>
+                    }
+                ]}
             >
                 <Layout>
                     <Layout.Section>
