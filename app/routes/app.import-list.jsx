@@ -126,7 +126,7 @@ export default function ImportList() {
                 <Card padding="0">
                   <EmptyState
                       heading="Your import list is empty. Explore the Marketplace to find winning products!"
-                      action={{ content: "Go to Marketplace", onAction: () => navigate("/app/marketplace") }}
+                      action={{ content: "Go to Marketplace", url: "/app/marketplace" }}
                       image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
                   >
                   </EmptyState>
